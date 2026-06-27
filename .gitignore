@@ -40,6 +40,13 @@ yarn-error.log*
 prisma/dev.db
 prisma/dev.db-journal
 
+# local markdown files
+COMAND1.md
+PART_2_project.md
+PROJECT_DETIAL.md
+implementation_plan.md
+task.md
+
 # vercel
 .vercel
 
