@@ -195,11 +195,12 @@ export default function LandingPage() {
       
       localStorage.setItem('kick_pkce_verifier', verifier);
       
-      const clientId = '01KW42MWDGAQ7NMX52PCP86TAG';
-      const redirectUri = 'http://localhost:3000/';
-      const scope = 'user:read channel:read events:subscribe';
+      const clientId = process.env.NEXT_PUBLIC_KICK_CLIENT_ID || '01KW42MWDGAQ7NMX52PCP86TAG';
+      const redirectUri = process.env.NEXT_PUBLIC_KICK_REDIRECT_URI || 'http://localhost:3000/';
+      const scope = 'user:read channel:read';
+      const state = 'streammind_oauth_state_' + Math.random().toString(36).substring(2, 10);
       
-      const authUrl = `https://id.kick.com/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&code_challenge=${challenge}&code_challenge_method=S256`;
+      const authUrl = `https://id.kick.com/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
       
       window.location.href = authUrl;
     } catch (err) {
