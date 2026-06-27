@@ -178,32 +178,12 @@ export default function OnboardingPage() {
       mode
     };
     
-    if (mode === 'live') {
-      toast.loading('Redirecting to Kick for Authorization...');
-      
-      // Generate and save PKCE parameters
-      const verifier = generateCodeVerifier();
-      const challenge = await generateCodeChallenge(verifier);
-      
-      localStorage.setItem('kick_pkce_verifier', verifier);
-      localStorage.setItem('streammind_session_config_temp', JSON.stringify(sessionConfig));
-      
-      // Build redirection authorization URL
-      const clientId = '01KW42MWDGAQ7NMX52PCP86TAG';
-      const redirectUri = 'http://localhost:3000/';
-      const scope = 'user:read channel:read events:subscribe';
-      
-      const authUrl = `https://id.kick.com/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&code_challenge=${challenge}&code_challenge_method=S256`;
-      
-      window.location.href = authUrl;
-    } else {
-      localStorage.setItem('streammind_session_config', JSON.stringify(sessionConfig));
-      toast.success('Launching StreamMind AI Co-pilot...');
-      
-      setTimeout(() => {
-        router.push('/dashboard');
-      }, 1200);
-    }
+    localStorage.setItem('streammind_session_config', JSON.stringify(sessionConfig));
+    toast.success('Launching StreamMind AI Co-pilot...');
+    
+    setTimeout(() => {
+      router.push('/dashboard');
+    }, 1200);
   };
 
   // Quick Demo Fast Path for Judges
@@ -434,17 +414,49 @@ export default function OnboardingPage() {
                 </div>
 
                 {mode === 'live' ? (
-                  <div className="space-y-2 pt-2 animate-fade-in-up">
+                  <div className="space-y-3 pt-2 animate-fade-in-up">
                     <label className="block text-[11px] text-gray-400">Enter KICK Channel Username</label>
-                    <input 
-                      type="text"
-                      placeholder="e.g. Ninja"
-                      value={streamerName}
-                      onChange={(e) => setStreamerName(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-kick-dark border border-kick-border text-white text-sm focus:outline-none focus:border-kick-green"
-                    />
-                    <p className="text-[10px] text-yellow-500">
-                      * Live integration will attempt connection to the Kick Channel chat feed. If credentials are empty, it runs simulated OAuth callback.
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        placeholder="e.g. Ninja"
+                        value={streamerName}
+                        onChange={(e) => setStreamerName(e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-lg bg-kick-dark border border-kick-border text-white text-sm focus:outline-none focus:border-kick-green"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!streamerName.trim()) {
+                            toast.error('Please enter a username first!');
+                            return;
+                          }
+                          // Run PKCE flow redirect
+                          const sessionConfig = {
+                            streamerName,
+                            theme,
+                            goals: selectedGoals,
+                            instructions,
+                            mode: 'live'
+                          };
+                          toast.loading('Redirecting to Kick for Authorization...');
+                          const verifier = generateCodeVerifier();
+                          const challenge = await generateCodeChallenge(verifier);
+                          localStorage.setItem('kick_pkce_verifier', verifier);
+                          localStorage.setItem('streammind_session_config_temp', JSON.stringify(sessionConfig));
+                          const clientId = '01KW42MWDGAQ7NMX52PCP86TAG';
+                          const redirectUri = 'http://localhost:3000/';
+                          const scope = 'user:read channel:read events:subscribe';
+                          const authUrl = `https://id.kick.com/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&code_challenge=${challenge}&code_challenge_method=S256`;
+                          window.location.href = authUrl;
+                        }}
+                        className="px-3 py-2 rounded-lg bg-kick-panel border border-kick-border text-xs text-gray-300 hover:text-white hover:border-kick-green/40 transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        OAuth Login (Optional)
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-gray-400">
+                      ⚡ **Default:** Direct connection to the public stream chat feed (no login required). Click "Launch" to start immediately. Use "OAuth Login" only if you want to authorize custom mod/moderator actions.
                     </p>
                   </div>
                 ) : (
