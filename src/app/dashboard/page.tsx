@@ -189,6 +189,20 @@ export default function Dashboard() {
     }
   }, [chatMessages]);
 
+  // Poll Kick stream status every 30 seconds if live mode is active
+  useEffect(() => {
+    if (mode !== 'live' || !streamerName || streamerName === 'DemoStreamer' || streamerName === 'KickGamer') return;
+    
+    // Check status immediately
+    checkLiveStatus(streamerName);
+    
+    const interval = setInterval(() => {
+      checkLiveStatus(streamerName);
+    }, 30000);
+    
+    return () => clearInterval(interval);
+  }, [mode, streamerName, checkLiveStatus]);
+
   // Main Socket Connection & Fallback Init
   useEffect(() => {
     // Load config from localStorage
@@ -677,16 +691,23 @@ export default function Dashboard() {
           <div className="h-4 w-px bg-kick-border" />
           
           <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-xs font-bold text-white uppercase">LIVE</span>
+            <div className={`w-2 h-2 rounded-full ${
+              (mode === 'demo' || isLive) ? 'bg-red-500 animate-pulse shadow-[0_0_8px_#EF4444]' : 'bg-gray-500'
+            }`} />
+            <span className="text-xs font-bold text-white uppercase">
+              {(mode === 'demo' || isLive) ? 'LIVE' : 'OFFLINE'}
+            </span>
           </div>
 
-          <div className="h-4 w-px bg-kick-border hidden sm:block" />
-
-          <div className="hidden sm:flex items-center gap-1 text-xs text-gray-400">
-            <Clock className="w-3 h-3" />
-            <span className="font-mono font-bold text-white">{uptime}</span>
-          </div>
+          {(mode === 'demo' || isLive) && (
+            <>
+              <div className="h-4 w-px bg-kick-border hidden sm:block" />
+              <div className="hidden sm:flex items-center gap-1 text-xs text-gray-400">
+                <Clock className="w-3 h-3" />
+                <span className="font-mono font-bold text-white">{uptime}</span>
+              </div>
+            </>
+          )}
 
           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
             mode === 'demo' 
@@ -737,12 +758,24 @@ export default function Dashboard() {
             <Wrench className="w-3.5 h-3.5" />
           </button>
 
-          <button 
-            onClick={handleEndSession}
-            className="bg-red-500/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
-          >
-            End Stream
-          </button>
+          {(mode === 'demo' || isLive) ? (
+            <button 
+              onClick={handleEndSession}
+              className="bg-red-500/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+            >
+              End Stream
+            </button>
+          ) : (
+            <button 
+              onClick={async () => {
+                toast.loading('Checking KICK broadcast status...');
+                await checkLiveStatus(streamerName);
+              }}
+              className="bg-kick-green text-kick-dark px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer hover:shadow-[0_0_10px_rgba(83,252,24,0.4)]"
+            >
+              Start Session
+            </button>
+          )}
         </div>
       </header>
 
