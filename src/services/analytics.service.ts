@@ -13,6 +13,16 @@ export interface AnalyticsSummary {
   spamAlert: boolean;
 }
 
+// Helper: safe DB write (never crashes the process)
+async function safeDbWrite<T>(operation: () => Promise<T>, label: string): Promise<T | null> {
+  try {
+    return await operation();
+  } catch (error: any) {
+    console.warn(`[DB WARN] ${label} failed (non-fatal):`, error?.message || error);
+    return null;
+  }
+}
+
 export class AnalyticsService {
   /**
    * Evaluates the hype score (0-100) based on message velocity, caps ratio, and duplicate activity.
@@ -61,86 +71,113 @@ export class AnalyticsService {
 
     // 1. Hype Spike Alert
     if (currentHypeLevel === 'high' && previousHypeLevel !== 'high') {
-      return await db.timelineEvent.create({
-        data: {
-          sessionId,
-          time: timeString,
-          type: 'hype',
-          description: '🔥 Huge hype spike detected in chat!'
-        }
-      });
+      return await safeDbWrite(
+        () => db.timelineEvent.create({
+          data: {
+            sessionId,
+            time: timeString,
+            type: 'hype',
+            description: '🔥 Huge hype spike detected in chat!'
+          }
+        }),
+        'timeline.hype'
+      );
     }
 
     // 2. Spam Flood Alert
     if (stats.messageCount > 5 && stats.spamCount / stats.messageCount > 0.4) {
       // Check if we logged a spam event in the last 2 minutes to prevent spamming timeline
-      const recentSpam = await db.timelineEvent.findFirst({
-        where: {
-          sessionId,
-          type: 'toxicity_spike',
-          timestamp: {
-            gt: new Date(Date.now() - 120000)
-          }
-        }
-      });
-
-      if (!recentSpam) {
-        return await db.timelineEvent.create({
-          data: {
+      let recentSpam = null;
+      try {
+        recentSpam = await db.timelineEvent.findFirst({
+          where: {
             sessionId,
-            time: timeString,
             type: 'toxicity_spike',
-            description: '⚠️ Spam flood: Chat velocity and spam rates spiked.'
+            timestamp: {
+              gt: new Date(Date.now() - 120000)
+            }
           }
         });
+      } catch {
+        // DB read failure, skip duplicate check
+      }
+
+      if (!recentSpam) {
+        return await safeDbWrite(
+          () => db.timelineEvent.create({
+            data: {
+              sessionId,
+              time: timeString,
+              type: 'toxicity_spike',
+              description: '⚠️ Spam flood: Chat velocity and spam rates spiked.'
+            }
+          }),
+          'timeline.spam'
+        );
       }
     }
 
     // 3. Question Wave Alert
     if (stats.questionCount >= 4) {
-      const recentQuestions = await db.timelineEvent.findFirst({
-        where: {
-          sessionId,
-          type: 'question_spike',
-          timestamp: {
-            gt: new Date(Date.now() - 180000)
-          }
-        }
-      });
-
-      if (!recentQuestions) {
-        return await db.timelineEvent.create({
-          data: {
+      let recentQuestions = null;
+      try {
+        recentQuestions = await db.timelineEvent.findFirst({
+          where: {
             sessionId,
-            time: timeString,
             type: 'question_spike',
-            description: `❓ Wave of viewer questions! (${stats.questionCount} unanswered questions).`
+            timestamp: {
+              gt: new Date(Date.now() - 180000)
+            }
           }
         });
+      } catch {
+        // DB read failure, skip duplicate check
+      }
+
+      if (!recentQuestions) {
+        return await safeDbWrite(
+          () => db.timelineEvent.create({
+            data: {
+              sessionId,
+              time: timeString,
+              type: 'question_spike',
+              description: `❓ Wave of viewer questions! (${stats.questionCount} unanswered questions).`
+            }
+          }),
+          'timeline.questions'
+        );
       }
     }
 
     // 4. Toxicity Alert
     if (stats.averageToxicity > 0.3) {
-      const recentToxicity = await db.timelineEvent.findFirst({
-        where: {
-          sessionId,
-          type: 'toxicity_spike',
-          timestamp: {
-            gt: new Date(Date.now() - 90000)
-          }
-        }
-      });
-
-      if (!recentToxicity) {
-        return await db.timelineEvent.create({
-          data: {
+      let recentToxicity = null;
+      try {
+        recentToxicity = await db.timelineEvent.findFirst({
+          where: {
             sessionId,
-            time: timeString,
             type: 'toxicity_spike',
-            description: '🚨 Moderation: Toxic messages or bad words increasing.'
+            timestamp: {
+              gt: new Date(Date.now() - 90000)
+            }
           }
         });
+      } catch {
+        // DB read failure, skip duplicate check
+      }
+
+      if (!recentToxicity) {
+        return await safeDbWrite(
+          () => db.timelineEvent.create({
+            data: {
+              sessionId,
+              time: timeString,
+              type: 'toxicity_spike',
+              description: '🚨 Moderation: Toxic messages or bad words increasing.'
+            }
+          }),
+          'timeline.toxicity'
+        );
       }
     }
 

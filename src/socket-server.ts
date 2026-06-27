@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { db } from './lib/db';
@@ -15,7 +16,7 @@ const httpServer = createServer((req, res) => {
 
 const io = new Server(httpServer, {
   cors: {
-    origin: '*', // Allow connections from Next.js dashboard
+    origin: '*',
     methods: ['GET', 'POST']
   }
 });
@@ -29,11 +30,24 @@ interface ActiveSession {
   mode: 'live' | 'demo';
   aiInterval: NodeJS.Timeout | null;
   messageBuffer: ProcessedChatMessage[];
+  allMessages: ProcessedChatMessage[]; // Full session message log (in-memory)
   previousHypeLevel: 'low' | 'medium' | 'high';
   disconnectLive?: () => void;
+  startTime: number;
+  totalMessageCount: number;
 }
 
 let activeSession: ActiveSession | null = null;
+
+// Helper: safe DB write (never crashes the process)
+async function safeDbWrite<T>(operation: () => Promise<T>, label: string): Promise<T | null> {
+  try {
+    return await operation();
+  } catch (error: any) {
+    console.warn(`[DB WARN] ${label} failed (non-fatal):`, error?.message || error);
+    return null;
+  }
+}
 
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
@@ -66,109 +80,112 @@ io.on('connection', (socket) => {
     await stopCurrentSession();
 
     try {
-      // 1. Save session to database
-      const session = await db.streamSession.create({
-        data: {
-          theme: data.theme,
-          goals: data.goals.join(','),
-          instructions: data.instructions,
-          mode: data.mode,
-          streamerName: data.streamerName || 'KickStreamer',
-          isActive: true
-        }
-      });
+      // 1. Try to save session to database (non-fatal if it fails)
+      const session = await safeDbWrite(
+        () => db.streamSession.create({
+          data: {
+            theme: data.theme,
+            goals: data.goals.join(','),
+            instructions: data.instructions,
+            mode: data.mode,
+            streamerName: data.streamerName || 'KickStreamer',
+            isActive: true
+          }
+        }),
+        'session.create'
+      );
+
+      const sessionId = session?.id || `mem-${Date.now()}`;
 
       // 2. Initialize active session memory
       activeSession = {
-        sessionId: session.id,
+        sessionId,
         theme: data.theme,
         goals: data.goals,
         instructions: data.instructions,
         mode: data.mode,
         aiInterval: null,
         messageBuffer: [],
-        previousHypeLevel: 'low'
+        allMessages: [],
+        previousHypeLevel: 'low',
+        startTime: Date.now(),
+        totalMessageCount: 0
       };
 
       socket.emit('session-started', {
-        sessionId: session.id,
-        theme: session.theme,
+        sessionId,
+        theme: data.theme,
         goals: data.goals,
-        instructions: session.instructions,
-        mode: session.mode
+        instructions: data.instructions,
+        mode: data.mode
       });
 
       // Notify other connections
       socket.broadcast.emit('session-status', {
         active: true,
-        sessionId: session.id,
-        theme: session.theme,
+        sessionId,
+        theme: data.theme,
         goals: data.goals,
-        instructions: session.instructions,
-        mode: session.mode
+        instructions: data.instructions,
+        mode: data.mode
       });
 
       // Log initial milestone
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      await db.timelineEvent.create({
-        data: {
-          sessionId: session.id,
-          time: timeStr,
-          type: 'custom',
-          description: `🟢 Stream Mind AI initialized in ${data.mode === 'demo' ? 'Simulated Demo' : 'Live KICK'} Mode.`
-        }
-      });
+      
+      await safeDbWrite(
+        () => db.timelineEvent.create({
+          data: {
+            sessionId,
+            time: timeStr,
+            type: 'custom',
+            description: `🟢 StreamMind AI initialized in ${data.mode === 'demo' ? 'Simulated Demo' : 'Live KICK'} Mode.`
+          }
+        }),
+        'timeline.init'
+      );
 
       // Refresh timeline for client
-      await emitTimeline(session.id);
+      await emitTimeline(sessionId);
 
-      // 3. Define message handler
-      const handleIncomingMessage = async (rawMsg: any) => {
+      // 3. Define message handler (ALL IN-MEMORY — no DB writes per message)
+      const handleIncomingMessage = (rawMsg: any) => {
         if (!activeSession) return;
 
-        // Run through pre-processing pipeline (deduplication, rule engine, question/spam detection)
+        // Run through pre-processing pipeline
         const processed = pipelineService.processMessage(rawMsg);
-        
-        // Save to DB
-        const savedMsg = await db.chatMessage.create({
-          data: {
-            sessionId: activeSession.sessionId,
-            sender: processed.sender,
-            text: processed.text,
-            isSpam: processed.isSpam,
-            isQuestion: processed.isQuestion,
-            sentiment: processed.sentiment,
-            toxicity: processed.toxicity,
-            badge: processed.badge
-          }
-        });
+        const msgId = `msg-${activeSession.totalMessageCount++}`;
+        const msgWithId = { ...processed, id: msgId };
 
-        // Add to active session batch buffer
-        activeSession.messageBuffer.push({
-          ...processed,
-          id: savedMsg.id
-        });
+        // Store in memory only
+        activeSession.messageBuffer.push(msgWithId);
+        activeSession.allMessages.push(msgWithId);
 
-        // Broadcast raw message to dashboard feed
+        // Keep allMessages capped at 500 to prevent memory issues
+        if (activeSession.allMessages.length > 500) {
+          activeSession.allMessages = activeSession.allMessages.slice(-400);
+        }
+
+        // Broadcast message to dashboard feed
         io.emit('new-message', {
-          id: savedMsg.id,
-          sender: savedMsg.sender,
-          text: savedMsg.text,
-          badge: savedMsg.badge,
-          isSpam: savedMsg.isSpam,
-          isQuestion: savedMsg.isQuestion,
-          sentiment: savedMsg.sentiment,
-          toxicity: savedMsg.toxicity,
-          timestamp: savedMsg.timestamp
+          id: msgId,
+          sender: processed.sender,
+          text: processed.text,
+          badge: processed.badge,
+          isSpam: processed.isSpam,
+          isQuestion: processed.isQuestion,
+          sentiment: processed.sentiment,
+          toxicity: processed.toxicity,
+          timestamp: new Date().toISOString()
         });
 
-        // If toxicity is super high, emit mod alert instantly (low latency response)
-        if (savedMsg.toxicity > 0.7) {
+        // If toxicity is super high, emit mod alert instantly
+        if (processed.toxicity > 0.7) {
           io.emit('mod-alert', {
-            id: savedMsg.id,
+            id: msgId,
             type: 'toxicity',
-            message: `Toxicity detected from user @${savedMsg.sender}: "${savedMsg.text}"`,
+            message: `Toxicity detected from user @${processed.sender}: "${processed.text}"`,
             severity: 'high'
           });
         }
@@ -187,7 +204,7 @@ io.on('connection', (socket) => {
         await runBatchAnalysis();
       }, 25000);
 
-      // Trigger initial fast analysis after 5 seconds to load UI widgets quickly
+      // Trigger initial fast analysis after 5 seconds
       setTimeout(async () => {
         if (activeSession && activeSession.messageBuffer.length > 0) {
           await runBatchAnalysis();
@@ -201,10 +218,9 @@ io.on('connection', (socket) => {
   });
 
   // Handle manual viewer message (sent from dashboard for testing)
-  socket.on('send-chat-message', async (data: { sender: string; text: string; badge: string }) => {
+  socket.on('send-chat-message', (data: { sender: string; text: string; badge: string }) => {
     if (!activeSession) return;
     
-    // Inject custom message into loop
     const rawMsg = {
       sender: data.sender || 'Viewer',
       text: data.text,
@@ -214,38 +230,24 @@ io.on('connection', (socket) => {
     
     // Run through standard pipeline processor
     const processed = pipelineService.processMessage(rawMsg);
-    
-    // Save to DB
-    const savedMsg = await db.chatMessage.create({
-      data: {
-        sessionId: activeSession.sessionId,
-        sender: processed.sender,
-        text: processed.text,
-        isSpam: processed.isSpam,
-        isQuestion: processed.isQuestion,
-        sentiment: processed.sentiment,
-        toxicity: processed.toxicity,
-        badge: processed.badge
-      }
-    });
+    const msgId = `custom-${activeSession.totalMessageCount++}`;
+    const msgWithId = { ...processed, id: msgId };
 
-    // Add to buffer
-    activeSession.messageBuffer.push({
-      ...processed,
-      id: savedMsg.id
-    });
+    // Store in memory
+    activeSession.messageBuffer.push(msgWithId);
+    activeSession.allMessages.push(msgWithId);
 
     // Broadcast message
     io.emit('new-message', {
-      id: savedMsg.id,
-      sender: savedMsg.sender,
-      text: savedMsg.text,
-      badge: savedMsg.badge,
-      isSpam: savedMsg.isSpam,
-      isQuestion: savedMsg.isQuestion,
-      sentiment: savedMsg.sentiment,
-      toxicity: savedMsg.toxicity,
-      timestamp: savedMsg.timestamp
+      id: msgId,
+      sender: processed.sender,
+      text: processed.text,
+      badge: processed.badge,
+      isSpam: processed.isSpam,
+      isQuestion: processed.isQuestion,
+      sentiment: processed.sentiment,
+      toxicity: processed.toxicity,
+      timestamp: new Date().toISOString()
     });
   });
 
@@ -278,20 +280,21 @@ io.on('connection', (socket) => {
           timestamp: new Date()
         });
 
-        db.chatMessage.create({
-          data: {
-            sessionId: activeSession.sessionId,
-            sender: processed.sender,
-            text: processed.text,
-            isSpam: processed.isSpam,
-            isQuestion: processed.isQuestion,
-            sentiment: processed.sentiment,
-            toxicity: processed.toxicity,
-            badge: processed.badge
-          }
-        }).then(savedMsg => {
-          activeSession?.messageBuffer.push({ ...processed, id: savedMsg.id });
-          io.emit('new-message', savedMsg);
+        const msgId = `hype-${activeSession!.totalMessageCount++}`;
+        const msgWithId = { ...processed, id: msgId };
+        activeSession!.messageBuffer.push(msgWithId);
+        activeSession!.allMessages.push(msgWithId);
+
+        io.emit('new-message', {
+          id: msgId,
+          sender: processed.sender,
+          text: processed.text,
+          badge: processed.badge,
+          isSpam: processed.isSpam,
+          isQuestion: processed.isQuestion,
+          sentiment: processed.sentiment,
+          toxicity: processed.toxicity,
+          timestamp: new Date().toISOString()
         });
       }, i * 200);
     });
@@ -329,20 +332,21 @@ io.on('connection', (socket) => {
           timestamp: new Date()
         });
 
-        db.chatMessage.create({
-          data: {
-            sessionId: activeSession.sessionId,
-            sender: processed.sender,
-            text: processed.text,
-            isSpam: processed.isSpam,
-            isQuestion: processed.isQuestion,
-            sentiment: processed.sentiment,
-            toxicity: processed.toxicity,
-            badge: processed.badge
-          }
-        }).then(savedMsg => {
-          activeSession?.messageBuffer.push({ ...processed, id: savedMsg.id });
-          io.emit('new-message', savedMsg);
+        const msgId = `spam-${activeSession!.totalMessageCount++}`;
+        const msgWithId = { ...processed, id: msgId };
+        activeSession!.messageBuffer.push(msgWithId);
+        activeSession!.allMessages.push(msgWithId);
+
+        io.emit('new-message', {
+          id: msgId,
+          sender: processed.sender,
+          text: processed.text,
+          badge: processed.badge,
+          isSpam: processed.isSpam,
+          isQuestion: processed.isQuestion,
+          sentiment: processed.sentiment,
+          toxicity: processed.toxicity,
+          timestamp: new Date().toISOString()
         });
       }, i * 250);
     });
@@ -377,60 +381,51 @@ io.on('connection', (socket) => {
           timestamp: new Date()
         });
 
-        db.chatMessage.create({
-          data: {
-            sessionId: activeSession.sessionId,
-            sender: processed.sender,
-            text: processed.text,
-            isSpam: processed.isSpam,
-            isQuestion: processed.isQuestion,
-            sentiment: processed.sentiment,
-            toxicity: processed.toxicity,
-            badge: processed.badge
-          }
-        }).then(savedMsg => {
-          activeSession?.messageBuffer.push({ ...processed, id: savedMsg.id });
-          io.emit('new-message', savedMsg);
+        const msgId = `toxic-${activeSession!.totalMessageCount++}`;
+        const msgWithId = { ...processed, id: msgId };
+        activeSession!.messageBuffer.push(msgWithId);
+        activeSession!.allMessages.push(msgWithId);
+
+        io.emit('new-message', {
+          id: msgId,
+          sender: processed.sender,
+          text: processed.text,
+          badge: processed.badge,
+          isSpam: processed.isSpam,
+          isQuestion: processed.isQuestion,
+          sentiment: processed.sentiment,
+          toxicity: processed.toxicity,
+          timestamp: new Date().toISOString()
         });
       }, i * 300);
     });
   });
 
   // Handle dashboard one-click action
-  socket.on('one-click-action', async (data: {
+  socket.on('one-click-action', (data: {
     type: 'question' | 'recommendation';
     action: 'addressed' | 'pin' | 'ignore';
-    id: string; // chatMessageId or tip index/id
+    id: string;
   }) => {
     if (!activeSession) return;
     console.log('Action performed:', data);
 
-    try {
-      if (data.type === 'question') {
-        if (data.action === 'addressed') {
-          await db.chatMessage.update({
-            where: { id: data.id },
-            data: { isAddressed: true }
-          });
-          
-          // Inform client to remove/update question in list
-          io.emit('action-completed', { type: 'question', action: 'addressed', id: data.id });
-        } else if (data.action === 'pin') {
-          // Send event to dashboard to pin question
-          io.emit('action-completed', { type: 'question', action: 'pin', id: data.id });
-        } else if (data.action === 'ignore') {
-          await db.chatMessage.update({
-            where: { id: data.id },
-            data: { isQuestion: false } // Demote from question list
-          });
-          io.emit('action-completed', { type: 'question', action: 'ignore', id: data.id });
+    if (data.type === 'question') {
+      // Update in-memory question state
+      if (data.action === 'addressed' || data.action === 'ignore') {
+        // Mark in allMessages so questions-update reflects it
+        const msg = activeSession.allMessages.find(m => m.id === data.id);
+        if (msg) {
+          if (data.action === 'addressed') {
+            (msg as any).isAddressed = true;
+          } else {
+            msg.isQuestion = false;
+          }
         }
-      } else if (data.type === 'recommendation') {
-        // Recommendations are transient, tell client to resolve card
-        io.emit('action-completed', { type: 'recommendation', action: data.action, id: data.id });
       }
-    } catch (e) {
-      console.error('Error executing one-click-action:', e);
+      io.emit('action-completed', { type: 'question', action: data.action, id: data.id });
+    } else if (data.type === 'recommendation') {
+      io.emit('action-completed', { type: 'recommendation', action: data.action, id: data.id });
     }
   });
 
@@ -480,37 +475,21 @@ async function runBatchAnalysis() {
     batchStats
   );
 
-  // Save the AI insights to database
-  const savedInsight = await db.aIInsight.create({
-    data: {
-      sessionId: activeSession.sessionId,
-      summary: aiReport.summary,
-      questions: JSON.stringify(aiReport.questions),
-      topics: JSON.stringify(aiReport.topics),
-      recommendations: JSON.stringify(aiReport.recommendations)
-    }
-  });
-
-  // 4. Update questions table for easy lookup in case of one-click actions
-  for (const q of aiReport.questions) {
-    // Find matching message in database to mark isQuestion = true
-    const matchingMsg = await db.chatMessage.findFirst({
-      where: {
-        sessionId: activeSession.sessionId,
-        sender: q.asker,
-        text: { contains: q.question.substring(0, Math.min(q.question.length, 20)) }
+  // Save the AI insights to database (non-fatal)
+  await safeDbWrite(
+    () => db.aIInsight.create({
+      data: {
+        sessionId: activeSession!.sessionId,
+        summary: aiReport.summary,
+        questions: JSON.stringify(aiReport.questions),
+        topics: JSON.stringify(aiReport.topics),
+        recommendations: JSON.stringify(aiReport.recommendations)
       }
-    });
+    }),
+    'aiInsight.create'
+  );
 
-    if (matchingMsg) {
-      await db.chatMessage.update({
-        where: { id: matchingMsg.id },
-        data: { isQuestion: true }
-      });
-    }
-  }
-
-  // 5. Analyze changes for timeline logging (e.g. hype transitions, spam)
+  // 4. Analyze changes for timeline logging
   const timelineEvent = await analyticsService.detectTimelineEvents(
     activeSession.sessionId,
     batchStats,
@@ -524,16 +503,20 @@ async function runBatchAnalysis() {
     await emitTimeline(activeSession.sessionId);
   }
 
+  // 5. Calculate messages per minute
+  const elapsedMs = Date.now() - activeSession.startTime;
+  const elapsedMin = Math.max(1, elapsedMs / 60000);
+  const messagesPerMin = Math.round(activeSession.totalMessageCount / elapsedMin);
+
   // 6. Broadcast all calculated metrics to dashboard
   io.emit('dashboard-update', {
-    insightId: savedInsight.id,
     summary: aiReport.summary,
     topics: aiReport.topics,
-    recommendations: aiReport.recommendations, // contains tips and confidence scores
+    recommendations: aiReport.recommendations,
     sentiment: aiReport.sentiment,
     hypeLevel,
     hypeScore,
-    messageSpeed: batchStats.messageCount * 2, // messages/min estimate
+    messagesPerMin,
     stats: {
       total: batchStats.messageCount,
       spam: batchStats.spamCount,
@@ -542,35 +525,36 @@ async function runBatchAnalysis() {
     }
   });
 
-  // Send update for questions separately so that they include DB ids
-  const questionsInDb = await db.chatMessage.findMany({
-    where: {
-      sessionId: activeSession.sessionId,
-      isQuestion: true,
-      isAddressed: false
-    },
-    orderBy: { timestamp: 'desc' },
-    take: 10
-  });
+  // Build questions list from in-memory allMessages
+  const questionsInMemory = activeSession.allMessages
+    .filter(m => m.isQuestion && !(m as any).isAddressed)
+    .slice(-10)
+    .reverse()
+    .map(q => ({
+      id: q.id,
+      question: q.text,
+      asker: q.sender,
+      timestamp: q.timestamp,
+      importance: q.toxicity > 0.5 ? 'high' : 'medium'
+    }));
 
-  io.emit('questions-update', questionsInDb.map(q => ({
-    id: q.id,
-    question: q.text,
-    asker: q.sender,
-    timestamp: q.timestamp,
-    importance: q.toxicity > 0.5 ? 'high' : 'medium'
-  })));
+  io.emit('questions-update', questionsInMemory);
 }
 
 /**
  * Emits the updated timeline events list
  */
 async function emitTimeline(sessionId: string) {
-  const events = await db.timelineEvent.findMany({
-    where: { sessionId },
-    orderBy: { timestamp: 'desc' }
-  });
-  io.emit('timeline-update', events);
+  try {
+    const events = await db.timelineEvent.findMany({
+      where: { sessionId },
+      orderBy: { timestamp: 'desc' }
+    });
+    io.emit('timeline-update', events);
+  } catch {
+    // If DB read fails, emit what we have from memory
+    io.emit('timeline-update', []);
+  }
 }
 
 /**
@@ -595,26 +579,37 @@ async function stopCurrentSession(): Promise<any[]> {
   // Log final milestone
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  await db.timelineEvent.create({
-    data: {
-      sessionId: sessId,
-      time: timeStr,
-      type: 'custom',
-      description: '🔴 Stream ended. StreamMind AI dashboard compiled final recap.'
-    }
-  });
+  await safeDbWrite(
+    () => db.timelineEvent.create({
+      data: {
+        sessionId: sessId,
+        time: timeStr,
+        type: 'custom',
+        description: '🔴 Stream ended. StreamMind AI dashboard compiled final recap.'
+      }
+    }),
+    'timeline.end'
+  );
 
   // Mark session inactive in DB
-  await db.streamSession.update({
-    where: { id: sessId },
-    data: { isActive: false }
-  });
+  await safeDbWrite(
+    () => db.streamSession.update({
+      where: { id: sessId },
+      data: { isActive: false }
+    }),
+    'session.deactivate'
+  );
 
   // Get final timeline
-  const finalTimeline = await db.timelineEvent.findMany({
-    where: { sessionId: sessId },
-    orderBy: { timestamp: 'asc' }
-  });
+  let finalTimeline: any[] = [];
+  try {
+    finalTimeline = await db.timelineEvent.findMany({
+      where: { sessionId: sessId },
+      orderBy: { timestamp: 'asc' }
+    });
+  } catch {
+    console.warn('[DB WARN] Could not fetch final timeline.');
+  }
 
   activeSession = null;
   return finalTimeline;
@@ -622,5 +617,10 @@ async function stopCurrentSession(): Promise<any[]> {
 
 // Start HTTP and WS server
 httpServer.listen(PORT, () => {
+  const hasApiKey = !!process.env.OPENROUTER_API_KEY;
   console.log(`StreamMind AI Realtime server listening on port ${PORT}`);
+  console.log(hasApiKey 
+    ? '✅ OpenRouter API key loaded — using LIVE AI analysis.' 
+    : '⚠️  OPENROUTER_API_KEY not found — running in Simulated AI mode.'
+  );
 });
