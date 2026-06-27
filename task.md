@@ -1,0 +1,24 @@
+# StreamMind AI - Task Checklist
+
+- [/] Next.js Boilerplate & Core Setup
+  - [/] Initialize Next.js 15 app router template
+  - [ ] Install packages (Prisma, Socket.io, Recharts, Zod, hook form, lucide-react)
+- [ ] Database Setup
+  - [ ] Create `prisma/schema.prisma` with models for Session, ChatMessage, TimelineEvent, AIInsight
+  - [ ] Generate Prisma Client and run migrations (SQLite)
+- [ ] Service Layer & Pre-Processing Pipeline
+  - [ ] Implement `src/services/ai.service.ts` for OpenRouter API connection
+  - [ ] Implement `src/services/pipeline.service.ts` for Rule Engine, Deduplication, and Question/Spam pre-detection
+  - [ ] Implement `src/services/kick.service.ts` for Live ingestion & high-fidelity simulator
+  - [ ] Implement `src/services/analytics.service.ts` for statistics aggregation
+- [ ] Custom Server with Socket.io Integration
+  - [ ] Write `server.js` to run Next.js and Socket.io side-by-side
+  - [ ] Connect custom server events to simulation and processing services
+- [ ] Pre-Stream Onboarding UI
+  - [ ] Create Onboarding wizard (`src/app/page.tsx`) with 3-step setup and "Use Demo Stream" quick launch
+- [ ] KICK-inspired Gaming Dashboard
+  - [ ] Create layout (`src/app/dashboard/layout.tsx`) and styling components
+  - [ ] Implement widgets: Live Chat, AI Summary, Important Questions (with One-Click Actions), Trending Topics, Hype Meter, Audience Mood, Moderator Alerts, Streamer Co-Pilot (with confidence score), and Timeline Events
+- [ ] Testing & Verification
+  - [ ] Run typescript builds
+  - [ ] Verify Demo Stream simulator functions end-to-end
