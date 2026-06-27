@@ -130,7 +130,15 @@ export async function POST(request: Request) {
           include: { profile: true }
         });
       } else {
-        // Update profile username if it changed
+        // Update user name + profile username if it changed
+        user = await db.user.update({
+          where: { id: user.id },
+          data: {
+            name: name || kickUsername || user.name,
+            image: image || user.image,
+          },
+          include: { profile: true }
+        });
         await db.streamerProfile.update({
           where: { userId: user.id },
           data: {
