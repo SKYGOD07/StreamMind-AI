@@ -73,6 +73,7 @@ io.on('connection', (socket) => {
     instructions: string;
     mode: 'live' | 'demo';
     streamerName?: string;
+    accessToken?: string;
   }) => {
     console.log('Starting stream session:', data);
     
@@ -195,7 +196,11 @@ io.on('connection', (socket) => {
       if (data.mode === 'demo') {
         kickService.startSimulation(data.theme, data.goals, handleIncomingMessage);
       } else {
-        const conn = kickService.connectLiveChat(data.streamerName || 'KickStreamer', handleIncomingMessage);
+        const conn = kickService.connectLiveChat(
+          data.streamerName || 'KickStreamer',
+          handleIncomingMessage,
+          data.accessToken
+        );
         activeSession.disconnectLive = conn.disconnect;
       }
 

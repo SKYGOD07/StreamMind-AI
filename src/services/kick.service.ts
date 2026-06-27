@@ -158,40 +158,158 @@ export class KickService {
   }
 
   /**
-   * Connects to a live KICK stream channel.
-   * In a real product, we connect to KICK's public chat API or Pusher WebSocket.
+   * Connects to a live KICK stream channel using native WebSockets and Pusher.
    */
   connectLiveChat(
     channelName: string,
-    callback: (msg: RawChatMessage) => void
+    callback: (msg: RawChatMessage) => void,
+    accessToken?: string
   ): { disconnect: () => void } {
     console.log(`Connecting to Live Kick Chat for channel: ${channelName}`);
-    
-    // Simulate some latency then start emitting basic messages to show connection
-    const interval = setInterval(() => {
-      const liveUsers = ['KickFan_1', 'SuperSub', 'Lurker88', 'ModBoss'];
-      const liveTexts = [
-        `Connecting live to ${channelName}...`,
-        'Nice stream!',
-        'Is this working?',
-        'Yes, chat is hooked up!'
-      ];
+    let ws: any = null;
+    let keepAliveInterval: any = null;
+    let isClosed = false;
 
-      const rUser = liveUsers[Math.floor(Math.random() * liveUsers.length)];
-      const rText = liveTexts[Math.floor(Math.random() * liveTexts.length)];
-      
-      callback({
-        sender: rUser,
-        text: rText,
-        badge: rUser === 'ModBoss' ? 'mod' : 'none',
-        timestamp: new Date()
-      });
-    }, 4000);
+    const startConnection = async () => {
+      try {
+        let chatroomId = "";
+        
+        // 1. Resolve broadcaster user ID / chatroom ID
+        if (accessToken) {
+          try {
+            const res = await fetch('https://api.kick.com/public/v1/channels', {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+              }
+            });
+            const data = await res.json();
+            if (data.broadcaster_user_id) {
+              chatroomId = String(data.broadcaster_user_id);
+              console.log(`Resolved channel ID from User Token: ${chatroomId}`);
+            }
+          } catch (err) {
+            console.error('Failed to get broadcaster channel details via oauth token:', err);
+          }
+        }
+
+        // Fallback to public channel endpoint if not resolved
+        if (!chatroomId) {
+          try {
+            const res = await fetch(`https://kick.com/api/v2/channels/${channelName}`, {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+              }
+            });
+            const data = await res.json();
+            if (data.id) {
+              chatroomId = String(data.id);
+              console.log(`Resolved public channel ID: ${chatroomId}`);
+            }
+          } catch (err) {
+            console.error('Failed to resolve public chatroom ID:', err);
+          }
+        }
+
+        // Default fallback
+        if (!chatroomId) {
+          console.warn('Could not resolve chatroom ID. Defaulting to fallback ID.');
+          chatroomId = "123";
+        }
+
+        if (isClosed) return;
+
+        // 2. Establish Pusher WebSocket connection
+        const pusherAppKey = "32cbd69e4b950bf97679";
+        const wsUrl = `wss://ws-us2.pusher.com/app/${pusherAppKey}?protocol=7&client=js&version=8.4.0&flash=false`;
+        
+        ws = new (globalThis as any).WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log(`Kick WebSocket connected. Subscribing to chatrooms.${chatroomId}.v2`);
+          ws.send(JSON.stringify({
+            event: "pusher:subscribe",
+            data: {
+              auth: "",
+              channel: `chatrooms.${chatroomId}.v2`
+            }
+          }));
+        };
+
+        ws.onmessage = (event: any) => {
+          try {
+            const payload = JSON.parse(event.data);
+            
+            // Handle Pusher keep-alive pings
+            if (payload.event === 'pusher:ping') {
+              ws.send(JSON.stringify({ event: 'pusher:pong' }));
+              return;
+            }
+
+            if (payload.event === 'App\\Events\\ChatMessageEvent') {
+              const data = JSON.parse(payload.data);
+              
+              // Map user badges
+              let badge: 'mod' | 'sub' | 'vip' | 'none' = 'none';
+              const badges = data.sender?.identity?.badges || [];
+              if (badges.some((b: any) => b.type === 'broadcaster' || b.type === 'moderator')) {
+                badge = 'mod';
+              } else if (badges.some((b: any) => b.type === 'sub' || b.type === 'subscriber')) {
+                badge = 'sub';
+              } else if (badges.some((b: any) => b.type === 'vip')) {
+                badge = 'vip';
+              }
+
+              callback({
+                sender: data.sender?.username || 'Viewer',
+                text: data.content || '',
+                badge,
+                timestamp: new Date()
+              });
+            }
+          } catch (err) {
+            console.error('Error parsing Kick message payload:', err);
+          }
+        };
+
+        ws.onerror = (err: any) => {
+          console.error('Kick WebSocket error:', err);
+        };
+
+        ws.onclose = () => {
+          console.log('Kick WebSocket closed.');
+          if (!isClosed) {
+            console.log('Attempting reconnect in 5s...');
+            setTimeout(startConnection, 5000);
+          }
+        };
+
+        keepAliveInterval = setInterval(() => {
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ event: 'pusher:ping', data: {} }));
+          }
+        }, 30000);
+
+      } catch (err) {
+        console.error('Error starting live connection:', err);
+        if (!isClosed) {
+          setTimeout(startConnection, 5000);
+        }
+      }
+    };
+
+    startConnection();
 
     return {
       disconnect: () => {
-        clearInterval(interval);
-        console.log(`Disconnected from Live Kick Chat for channel: ${channelName}`);
+        isClosed = true;
+        if (keepAliveInterval) clearInterval(keepAliveInterval);
+        if (ws) {
+          try {
+            ws.close();
+          } catch (e) {}
+        }
       }
     };
   }

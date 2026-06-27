@@ -178,7 +178,8 @@ export default function Dashboard() {
         goals: config.goals,
         instructions: config.instructions,
         mode: config.mode,
-        streamerName: config.streamerName
+        streamerName: config.streamerName,
+        accessToken: (config as any).accessToken
       });
     });
 
@@ -311,7 +312,7 @@ export default function Dashboard() {
       const isToxic = rText.includes('noob') || rText.includes('trash');
 
       const newMsg: ChatMessage = {
-        id: `local-${messageCounter}`,
+        id: `local-${messageCounter}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         sender: rSender,
         text: rText,
         badge: rBadge as any,
@@ -326,7 +327,7 @@ export default function Dashboard() {
 
       if (isSpam && Math.random() < 0.3) {
         setModAlerts(prev => [{
-          id: `alert-${Date.now()}`,
+          id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           message: `Spam alert from @${rSender}: "${rText}"`,
           severity: 'medium'
         }, ...prev.slice(0, 15)]);
@@ -334,7 +335,7 @@ export default function Dashboard() {
       
       if (isToxic && Math.random() < 0.4) {
         setModAlerts(prev => [{
-          id: `alert-${Date.now()}`,
+          id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           message: `Toxicity: "${rText}" by @${rSender}`,
           severity: 'high'
         }, ...prev.slice(0, 15)]);
@@ -344,7 +345,7 @@ export default function Dashboard() {
         setQuestions(prev => {
           if (prev.some(q => q.question === rText)) return prev;
           return [...prev, {
-            id: `q-${Date.now()}`,
+            id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             question: rText,
             asker: rSender,
             importance: Math.random() > 0.5 ? 'high' : 'medium'
@@ -390,7 +391,7 @@ export default function Dashboard() {
 
         if (newScore > 75) {
           setTimeline(prev => [{
-            id: `event-${Date.now()}`,
+            id: `event-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             type: 'hype',
             description: '🔥 Huge hype spike detected!'
@@ -441,7 +442,7 @@ export default function Dashboard() {
         setSentiment({ positive: 80, neutral: 15, negative: 5 });
         
         const spikeMsgs: ChatMessage[] = Array.from({ length: 6 }).map((_, i) => ({
-          id: `spike-hype-${i}-${Date.now()}`,
+          id: `spike-hype-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           sender: `HypeLover_${i}`,
           text: 'POGGERS LETS GOOOO !!! 🔥🔥🔥🚀',
           badge: 'sub' as const,
@@ -454,7 +455,7 @@ export default function Dashboard() {
         setChatMessages(prev => [...prev, ...spikeMsgs]);
         
         setTimeline(prev => [{
-          id: `evt-${Date.now()}`,
+          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           time: nowString,
           type: 'hype' as const,
           description: '🔥 Huge hype spike detected!'
@@ -463,7 +464,7 @@ export default function Dashboard() {
       } else if (spikeType === 'spam') {
         setSentiment({ positive: 30, neutral: 30, negative: 40 });
         const spikeMsgs: ChatMessage[] = Array.from({ length: 5 }).map((_, i) => ({
-          id: `spike-spam-${i}-${Date.now()}`,
+          id: `spike-spam-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           sender: `BotSpam_${i}`,
           text: 'CLAIM FREE ROBUX AT scam-robux-link.xyz !!!',
           badge: 'none' as const,
@@ -476,13 +477,13 @@ export default function Dashboard() {
         setChatMessages(prev => [...prev, ...spikeMsgs]);
 
         setModAlerts(prev => [{
-          id: `alert-${Date.now()}`,
+          id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           message: 'Spam spike: Scam URL links blocked.',
           severity: 'medium'
         }, ...prev]);
 
         setTimeline(prev => [{
-          id: `evt-${Date.now()}`,
+          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           time: nowString,
           type: 'toxicity_spike' as const,
           description: '⚠️ Spam flood detected.'
@@ -491,7 +492,7 @@ export default function Dashboard() {
       } else if (spikeType === 'toxic') {
         setSentiment({ positive: 20, neutral: 30, negative: 50 });
         const spikeMsgs: ChatMessage[] = Array.from({ length: 4 }).map((_, i) => ({
-          id: `spike-toxic-${i}-${Date.now()}`,
+          id: `spike-toxic-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           sender: `ToxicTroll_${i}`,
           text: 'streamer is absolute garbage at this game noob',
           badge: 'none' as const,
@@ -504,13 +505,13 @@ export default function Dashboard() {
         setChatMessages(prev => [...prev, ...spikeMsgs]);
 
         setModAlerts(prev => [{
-          id: `alert-${Date.now()}`,
+          id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           message: 'High toxicity detected in chat.',
           severity: 'high'
         }, ...prev]);
 
         setTimeline(prev => [{
-          id: `evt-${Date.now()}`,
+          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           time: nowString,
           type: 'toxicity_spike' as const,
           description: '🚨 Toxic messages increasing.'
@@ -531,7 +532,7 @@ export default function Dashboard() {
       });
     } else {
       const newMsg: ChatMessage = {
-        id: `custom-msg-${Date.now()}`,
+        id: `custom-msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         sender: customMsgSender,
         text: customMsgText,
         badge: customMsgBadge,
@@ -545,7 +546,7 @@ export default function Dashboard() {
       
       if (newMsg.isQuestion) {
         setQuestions(prev => [{
-          id: `q-${Date.now()}`,
+          id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           question: newMsg.text,
           asker: newMsg.sender,
           importance: 'high'
@@ -567,7 +568,7 @@ export default function Dashboard() {
       const finalEvents = [
         ...timeline,
         {
-          id: `evt-end-${Date.now()}`,
+          id: `evt-end-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           time: nowString,
           type: 'custom' as const,
           description: '🔴 Stream ended. Final recap compiled.'

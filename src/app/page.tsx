@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Gamepad2, 
@@ -13,9 +13,45 @@ import {
   ChevronLeft, 
   Play, 
   HelpCircle,
-  Tv
+  Tv,
+  Loader2
 } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
+
+// Cryptographic PKCE Helpers
+function dec2hex(dec: number) {
+  return ('0' + dec.toString(16)).substr(-2);
+}
+
+function generateCodeVerifier() {
+  const array = new Uint32Array(56);
+  window.crypto.getRandomValues(array);
+  return Array.from(array, dec2hex).join('');
+}
+
+async function sha256(plain: string) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plain);
+  return window.crypto.subtle.digest('SHA-256', data);
+}
+
+function base64urlencode(a: ArrayBuffer) {
+  let str = "";
+  const bytes = new Uint8Array(a);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    str += String.fromCharCode(bytes[i]);
+  }
+  return btoa(str)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+async function generateCodeChallenge(v: string) {
+  const hashed = await sha256(v);
+  return base64urlencode(hashed);
+}
 
 const GOAL_OPTIONS = [
   { id: 'Detect important questions', label: 'Detect important questions', icon: HelpCircle, desc: 'Extract viewer questions instantly' },
@@ -42,6 +78,71 @@ export default function OnboardingPage() {
   const [theme, setTheme] = useState('');
   const [selectedGoals, setSelectedGoals] = useState<string[]>(['Detect important questions', 'Detect hype moments']);
   const [instructions, setInstructions] = useState('');
+  const [isExchangingToken, setIsExchangingToken] = useState(false);
+
+  // Check for redirected authorization code on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+      handleCallback(code);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCallback = async (code: string) => {
+    setIsExchangingToken(true);
+    const toastId = toast.loading('Exchanging Kick Authorization Code...');
+    try {
+      const savedConfig = localStorage.getItem('streammind_session_config_temp');
+      const verifier = localStorage.getItem('kick_pkce_verifier');
+
+      if (!savedConfig || !verifier) {
+        throw new Error('Missing session configuration or verifier. Please start setup again.');
+      }
+
+      const response = await fetch('/api/kick-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          code,
+          code_verifier: verifier
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to exchange token.');
+      }
+
+      // Save user session configuration with retrieved tokens
+      const config = JSON.parse(savedConfig);
+      config.accessToken = data.access_token;
+      config.refreshToken = data.refresh_token;
+      config.expiresAt = Date.now() + (data.expires_in * 1000);
+
+      localStorage.setItem('streammind_session_config', JSON.stringify(config));
+      localStorage.removeItem('streammind_session_config_temp');
+      localStorage.removeItem('kick_pkce_verifier');
+
+      toast.success('Successfully connected to Kick Account!', { id: toastId });
+      
+      // Clean query parameters from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 1000);
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e.message || 'Authentication failed.', { id: toastId });
+      setIsExchangingToken(false);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
 
   // Handle Preset Click
   const selectPreset = (preset: typeof PRESETS[0]) => {
@@ -61,7 +162,7 @@ export default function OnboardingPage() {
   };
 
   // Submit / Launch
-  const handleLaunch = () => {
+  const handleLaunch = async () => {
     if (!theme.trim()) {
       toast.error('Please describe what today\'s stream is about!');
       setStep(1);
@@ -77,12 +178,32 @@ export default function OnboardingPage() {
       mode
     };
     
-    localStorage.setItem('streammind_session_config', JSON.stringify(sessionConfig));
-    toast.success('Launching StreamMind AI Co-pilot...');
-    
-    setTimeout(() => {
-      router.push('/dashboard');
-    }, 1200);
+    if (mode === 'live') {
+      toast.loading('Redirecting to Kick for Authorization...');
+      
+      // Generate and save PKCE parameters
+      const verifier = generateCodeVerifier();
+      const challenge = await generateCodeChallenge(verifier);
+      
+      localStorage.setItem('kick_pkce_verifier', verifier);
+      localStorage.setItem('streammind_session_config_temp', JSON.stringify(sessionConfig));
+      
+      // Build redirection authorization URL
+      const clientId = '01KW42MWDGAQ7NMX52PCP86TAG';
+      const redirectUri = 'http://localhost:3000/';
+      const scope = 'user:read channel:read events:subscribe';
+      
+      const authUrl = `https://id.kick.com/oauth/authorize?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&code_challenge=${challenge}&code_challenge_method=S256`;
+      
+      window.location.href = authUrl;
+    } else {
+      localStorage.setItem('streammind_session_config', JSON.stringify(sessionConfig));
+      toast.success('Launching StreamMind AI Co-pilot...');
+      
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 1200);
+    }
   };
 
   // Quick Demo Fast Path for Judges
@@ -101,6 +222,20 @@ export default function OnboardingPage() {
       router.push('/dashboard');
     }, 800);
   };
+
+  if (isExchangingToken) {
+    return (
+      <div className="min-h-screen bg-kick-dark text-gray-100 cyber-grid flex flex-col items-center justify-center p-4">
+        <div className="glass-panel rounded-3xl p-8 flex flex-col items-center gap-4 max-w-sm text-center border-kick-green/30 shadow-[0_0_30px_rgba(83,252,24,0.15)]">
+          <Loader2 className="w-10 h-10 text-kick-green animate-spin" />
+          <h2 className="text-xl font-bold text-white">Connecting with KICK</h2>
+          <p className="text-sm text-gray-400 leading-relaxed">
+            Please wait while we securely exchange your Authorization Code and initialize your StreamMind AI Co-pilot dashboard...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-kick-dark text-gray-100 cyber-grid flex flex-col items-center justify-center p-4 relative overflow-hidden">
