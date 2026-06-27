@@ -22,7 +22,9 @@ import {
   Wrench,
   ChevronDown,
   ChevronUp,
-  Activity
+  Activity,
+  Sliders,
+  Tv
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { Toaster, toast } from 'react-hot-toast';
@@ -88,10 +90,64 @@ export default function Dashboard() {
   // Stream Recap overlay
   const [showRecap, setShowRecap] = useState(false);
   const [recapTimeline, setRecapTimeline] = useState<TimelineEvent[]>([]);
+  const [recapData, setRecapData] = useState<any>(null);
   const [pinnedQuestion, setPinnedQuestion] = useState<string | null>(null);
   
   // Dev Tools Panel
   const [showDevTools, setShowDevTools] = useState(false);
+
+  // Settings Panel & OBS Key configurations
+  const [showSettings, setShowSettings] = useState(false);
+  const [streamUrl, setStreamUrl] = useState('rtmps://stream.kick.com/live');
+  const [streamKey, setStreamKey] = useState('');
+  const [isLive, setIsLive] = useState(false);
+  const [viewerCount, setViewerCount] = useState(0);
+  const [category, setCategory] = useState('');
+  const [isCheckingLive, setIsCheckingLive] = useState(false);
+
+  // Fetch KICK Live Status from public API
+  const checkLiveStatus = useCallback(async (channel: string) => {
+    if (!channel || channel === 'DemoStreamer' || channel === 'KickGamer') {
+      setIsLive(false);
+      return;
+    }
+    setIsCheckingLive(true);
+    try {
+      const res = await fetch(`https://kick.com/api/v2/channels/${channel}`);
+      if (!res.ok) throw new Error('Channel not found');
+      const data = await res.json();
+      
+      if (data.livestream) {
+        setIsLive(true);
+        setViewerCount(data.livestream.viewer_count || 0);
+        setCategory(data.livestream.categories?.[0]?.name || 'Just Chatting');
+      } else {
+        setIsLive(false);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch Kick live status:', e);
+      setIsLive(false);
+    } finally {
+      setIsCheckingLive(false);
+    }
+  }, []);
+
+  // Load manually stored configurations from database
+  const loadProfileSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/session');
+      const data = await res.json();
+      if (data.authenticated && data.profile) {
+        setStreamUrl(data.profile.streamUrl || 'rtmps://stream.kick.com/live');
+        setStreamKey(data.profile.streamKey || '');
+        if (data.profile.kickUsername) {
+          checkLiveStatus(data.profile.kickUsername);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load profile settings:', e);
+    }
+  }, [checkLiveStatus]);
 
   // AI sync state
   const [aiLastSync, setAiLastSync] = useState<number>(0);
@@ -262,10 +318,14 @@ export default function Dashboard() {
     });
 
     socketInstance.on('session-ended', (data: any) => {
-      setRecapTimeline(data.recap || []);
+      setRecapData(data.recap);
+      setRecapTimeline(data.timeline || []);
       setShowRecap(true);
       toast.success('Session completed.');
     });
+
+    // Load Streamer profile and stream status
+    loadProfileSettings();
 
     return () => {
       socketInstance.disconnect();
@@ -575,6 +635,15 @@ export default function Dashboard() {
         }
       ].reverse();
       
+      setRecapData({
+        summary: `Successfully completed simulated stream co-pilot for "${theme}". Chat remained active with ${chatMessages.length} total messages processed and highlighted key viewer questions.`,
+        topTopics: ['valorant', 'giveaway', 'specs'],
+        sentimentScore: 82.5,
+        peakHypeAt: nowString,
+        uptime: uptime,
+        messageCount: chatMessages.length,
+        eventCount: finalEvents.length
+      });
       setRecapTimeline(finalEvents);
       setShowRecap(true);
       toast.success('Session completed.');
@@ -643,6 +712,18 @@ export default function Dashboard() {
           </div>
 
           <div className="h-4 w-px bg-kick-border hidden md:block" />
+
+          <button 
+            onClick={() => setShowSettings(!showSettings)}
+            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+              showSettings 
+                ? 'bg-kick-green/10 border-kick-green/30 text-kick-green' 
+                : 'bg-kick-panel border-kick-border text-gray-400 hover:text-white'
+            }`}
+            title="OBS & Stream Settings"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+          </button>
 
           <button 
             onClick={() => setShowDevTools(!showDevTools)}
@@ -1136,8 +1217,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-
-      {/* ──── STREAM RECAP OVERLAY ──── */}
       {showRecap && (
         <div className="absolute inset-0 bg-kick-dark/95 backdrop-blur z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-2xl bg-kick-panel border border-kick-green/30 rounded-2xl p-6 md:p-8 flex flex-col max-h-[85vh] shadow-[0_0_40px_rgba(83,252,24,0.1)] animate-fade-in-up">
@@ -1145,28 +1224,52 @@ export default function Dashboard() {
             {/* Header */}
             <div className="text-center pb-4 border-b border-kick-border">
               <div className="text-3xl mb-2">🏆</div>
-              <h2 className="text-xl font-black text-white">Stream Recap</h2>
+              <h2 className="text-xl font-black text-white font-sans">Stream AI Recap</h2>
               <p className="text-xs text-gray-400 mt-1">Session analytics for @{streamerName}</p>
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-3 gap-3 my-4">
+            <div className="grid grid-cols-4 gap-3 my-4">
               <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
                 <span className="text-[10px] text-gray-500 font-bold uppercase block">Uptime</span>
-                <span className="text-sm font-black text-white block font-mono">{uptime}</span>
+                <span className="text-sm font-black text-white block font-mono">{recapData?.uptime || uptime}</span>
               </div>
               <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
-                <span className="text-[10px] text-gray-500 font-bold uppercase block">Messages</span>
-                <span className="text-sm font-black text-kick-green block">{chatMessages.length}</span>
+                <span className="text-[10px] text-gray-500 font-bold uppercase block font-sans">Messages</span>
+                <span className="text-sm font-black text-kick-green block">{recapData?.messageCount || chatMessages.length}</span>
               </div>
               <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
-                <span className="text-[10px] text-gray-500 font-bold uppercase block">Events</span>
-                <span className="text-sm font-black text-white block">{timeline.length}</span>
+                <span className="text-[10px] text-gray-500 font-bold uppercase block font-sans">Sentiment</span>
+                <span className="text-sm font-black text-white block">{recapData?.sentimentScore || 78.5}%</span>
+              </div>
+              <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
+                <span className="text-[10px] text-gray-500 font-bold uppercase block">Peak Hype</span>
+                <span className="text-sm font-black text-white block font-mono">{recapData?.peakHypeAt || 'N/A'}</span>
               </div>
             </div>
 
+            {/* AI Summary and Top Topics */}
+            {recapData?.summary && (
+              <div className="p-4 bg-kick-green/5 border border-kick-green/20 rounded-xl mb-4 text-left">
+                <h4 className="text-xs font-bold text-kick-green uppercase mb-1">AI Session Summary</h4>
+                <p className="text-xs text-gray-200 leading-relaxed">
+                  {recapData.summary}
+                </p>
+                {recapData.topTopics && (
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Top Topics:</span>
+                    {recapData.topTopics.map((topic: string, idx: number) => (
+                      <span key={idx} className="px-2 py-0.5 rounded bg-kick-dark border border-kick-border text-[10px] text-white">
+                        #{topic}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Timeline */}
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div className="flex-1 overflow-y-auto min-h-0 text-left">
               <h4 className="text-xs text-gray-400 font-bold uppercase mb-3 flex items-center gap-1">
                 <Clock className="w-3 h-3 text-kick-green" />
                 Event Log
@@ -1211,6 +1314,130 @@ export default function Dashboard() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* ──── OBS SETUP & STREAM SETTINGS PANEL ──── */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-kick-panel border border-kick-border rounded-2xl p-6 shadow-2xl space-y-6 relative overflow-hidden animate-fade-in-up text-left">
+            <div className="flex items-center justify-between border-b border-kick-border pb-3">
+              <h3 className="font-extrabold text-white text-sm uppercase tracking-wider flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-kick-green" />
+                Stream Settings & OBS
+              </h3>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Kick Live Status Widget */}
+            <div className="p-4 rounded-xl border bg-kick-dark border-kick-border space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-gray-400">KICK Stream Status</span>
+                <button 
+                  onClick={() => checkLiveStatus(streamerName)}
+                  disabled={isCheckingLive}
+                  className="text-[10px] text-kick-green hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className={`w-2.5 h-2.5 ${isCheckingLive ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className={`w-3.5 h-3.5 rounded-full ${isLive ? 'bg-kick-green animate-pulse shadow-[0_0_8px_#53FC18]' : 'bg-red-500'}`} />
+                <div>
+                  <h4 className="text-sm font-bold text-white capitalize">
+                    {isLive ? '🟢 Live Now' : '🔴 Offline'}
+                  </h4>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {isLive 
+                      ? `${viewerCount} viewers • Streaming ${category}` 
+                      : 'Channel is currently offline. Setup OBS to stream live.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* OBS Streaming Configuration */}
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-400">OBS Stream Server URL</label>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(streamUrl);
+                      toast.success('Server URL copied!');
+                    }}
+                    className="text-[9px] text-kick-green hover:underline cursor-pointer"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <input 
+                  type="text" 
+                  value={streamUrl}
+                  onChange={(e) => setStreamUrl(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green"
+                  placeholder="rtmps://stream.kick.com/live"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-400">OBS Stream Key</label>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(streamKey);
+                      toast.success('Stream Key copied!');
+                    }}
+                    className="text-[9px] text-kick-green hover:underline cursor-pointer"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <input 
+                  type="password" 
+                  value={streamKey}
+                  onChange={(e) => setStreamKey(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green font-mono"
+                  placeholder="live_xxxxxxxxxxxx"
+                />
+              </div>
+            </div>
+
+            {/* Save Buttons */}
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="flex-1 py-2 rounded-xl bg-kick-border text-xs text-white hover:bg-kick-border/85 cursor-pointer font-bold text-center"
+              >
+                Close
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/streamer/settings', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ streamUrl, streamKey })
+                    });
+                    if (!res.ok) throw new Error('Save failed');
+                    toast.success('Settings saved to database!');
+                    setShowSettings(false);
+                  } catch (e: any) {
+                    toast.error('Failed to save settings.');
+                  }
+                }}
+                className="flex-1 py-2 rounded-xl bg-kick-green text-kick-dark text-xs font-black cursor-pointer hover:shadow-[0_0_10px_rgba(83,252,24,0.3)] text-center animate-none"
+              >
+                Save Settings
+              </button>
+            </div>
           </div>
         </div>
       )}

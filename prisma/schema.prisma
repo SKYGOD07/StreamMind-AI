@@ -8,19 +8,50 @@ generator client {
   provider = "prisma-client-js"
 }
 
-model StreamSession {
+model User {
+  id            String           @id @default(uuid())
+  email         String?          @unique
+  name          String
+  image         String?
+  provider      String           // "kick" | "demo"
+  kickId        String?          @unique
+  accessToken   String?
+  refreshToken  String?
+  profile       StreamerProfile?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+model StreamerProfile {
   id           String          @id @default(uuid())
+  userId       String          @unique
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kickUsername String
+  kickUserId   String?         // Numeric channel ID from KICK
+  streamKey    String?         // Manual stream key input for OBS
+  streamUrl    String?         // Manual stream server URL input for OBS
+  isLive       Boolean         @default(false)
+  sessions     StreamSession[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+}
+
+model StreamSession {
+  id           String           @id @default(uuid())
+  profileId    String?          
+  profile      StreamerProfile? @relation(fields: [profileId], references: [id], onDelete: Cascade)
   theme        String
   goals        String          // Comma-separated or JSON string of goals
   instructions String
   mode         String          // "live" | "demo"
-  streamerName String          @default("KickStreamer")
-  isActive     Boolean         @default(true)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  streamerName String           @default("KickStreamer")
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
   messages     ChatMessage[]
   events       TimelineEvent[]
   insights     AIInsight[]
+  recap        StreamRecap?
 }
 
 model ChatMessage {
@@ -57,4 +88,15 @@ model AIInsight {
   topics          String        // JSON array of trending topics
   recommendations String        // JSON array of actionable recommendations with confidence scores
   timestamp       DateTime      @default(now())
+}
+
+model StreamRecap {
+  id             String        @id @default(uuid())
+  sessionId      String        @unique
+  session        StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  summary        String
+  topTopics      String        // JSON array of topics
+  sentimentScore Float         // Average sentiment rating
+  peakHypeAt     String?       // Time string of peak hype
+  createdAt      DateTime      @default(now())
 }
