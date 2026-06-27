@@ -1,0 +1,59 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model StreamSession {
+  id           String          @id @default(uuid())
+  theme        String
+  goals        String          // Comma-separated or JSON string of goals
+  instructions String
+  mode         String          // "live" | "demo"
+  streamerName String          @default("KickStreamer")
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  messages     ChatMessage[]
+  events       TimelineEvent[]
+  insights     AIInsight[]
+}
+
+model ChatMessage {
+  id          String        @id @default(uuid())
+  sessionId   String
+  session     StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sender      String
+  text        String
+  timestamp   DateTime      @default(now())
+  isSpam      Boolean       @default(false)
+  isQuestion  Boolean       @default(false)
+  isAddressed Boolean       @default(false)
+  sentiment   String        @default("neutral") // "positive" | "neutral" | "negative"
+  toxicity    Float         @default(0.0)       // 0.0 to 1.0
+  badge       String        @default("none")    // "mod" | "sub" | "vip" | "none"
+}
+
+model TimelineEvent {
+  id          String        @id @default(uuid())
+  sessionId   String
+  session     StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  time        String        // e.g. "02:14 PM"
+  type        String        // "hype" | "game_request" | "question_spike" | "toxicity_spike" | "custom"
+  description String
+  timestamp   DateTime      @default(now())
+}
+
+model AIInsight {
+  id              String        @id @default(uuid())
+  sessionId       String
+  session         StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  summary         String
+  questions       String        // JSON array of ranked questions
+  topics          String        // JSON array of trending topics
+  recommendations String        // JSON array of actionable recommendations with confidence scores
+  timestamp       DateTime      @default(now())
+}
