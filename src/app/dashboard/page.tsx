@@ -101,6 +101,7 @@ export default function Dashboard() {
   
   // Timers and references
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   const uptimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const fallbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -124,9 +125,18 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Scroll to bottom of chat
+  // Scroll to bottom of chat only if user is already near the bottom
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = chatContainerRef.current;
+    if (container) {
+      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+      if (isAtBottom || chatMessages.length <= 1) {
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    }
   }, [chatMessages]);
 
   // Main Socket Connection & Fallback Init
@@ -660,7 +670,7 @@ export default function Dashboard() {
       </aside>
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto relative z-10">
+      <main className="flex-1 flex flex-col min-w-0 lg:overflow-hidden overflow-y-auto relative z-10">
         
         {/* TOP NAVBAR */}
         <header className="h-16 border-b border-kick-border bg-kick-panel/50 backdrop-blur px-4 md:px-6 flex items-center justify-between shrink-0">
@@ -759,10 +769,10 @@ export default function Dashboard() {
         )}
 
         {/* DASHBOARD CONTENT GRID */}
-        <div className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="flex-1 p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-hidden">
           
           {/* LEFT COLUMN: Chat Feed & Controls */}
-          <div className="lg:col-span-1 flex flex-col gap-6 h-[calc(100vh-10rem)] lg:h-auto">
+          <div className="lg:col-span-1 flex flex-col gap-6 h-auto lg:h-[calc(100vh-7rem)] overflow-hidden">
             
             {/* Widget 1: Chat Feed */}
             <div className="flex-1 glass-panel rounded-2xl flex flex-col overflow-hidden">
@@ -775,7 +785,7 @@ export default function Dashboard() {
               </div>
 
               {/* Chat scrolling box */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-3.5 text-sm flex flex-col min-h-0">
+              <div ref={chatContainerRef} className="flex-1 p-4 overflow-y-auto space-y-3.5 text-sm flex flex-col min-h-0">
                 {chatMessages.length === 0 ? (
                   <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-gray-500">
                     <MessageSquare className="w-8 h-8 mb-2 stroke-[1.5]" />
@@ -880,7 +890,7 @@ export default function Dashboard() {
           </div>
 
           {/* MIDDLE COLUMN: AI Summary, Questions & Co-pilot */}
-          <div className="lg:col-span-1 flex flex-col gap-6">
+          <div className="lg:col-span-1 flex flex-col gap-6 h-auto lg:h-[calc(100vh-7rem)] overflow-hidden">
             
             {/* Widget 2: AI Summary */}
             <div className="glass-panel rounded-2xl p-4 flex flex-col relative overflow-hidden">
@@ -1018,7 +1028,7 @@ export default function Dashboard() {
           </div>
 
           {/* RIGHT COLUMN: Hype, Sentiment, Mod Alerts, Timeline */}
-          <div className="lg:col-span-1 flex flex-col gap-6">
+          <div className="lg:col-span-1 flex flex-col gap-6 h-auto lg:h-[calc(100vh-7rem)] overflow-hidden">
             
             {/* Widget 4: Hype Meter */}
             <div className="glass-panel rounded-2xl p-4 flex flex-col relative overflow-hidden">
