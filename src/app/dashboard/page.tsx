@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
+  Menu,
+  X,
   MessageSquare, 
   Sparkles, 
   HelpCircle, 
@@ -14,7 +16,6 @@ import {
   Zap,
   Shield,
   Check,
-  X,
   LogOut,
   RefreshCw,
   Award,
@@ -24,10 +25,19 @@ import {
   ChevronUp,
   Activity,
   Sliders,
-  Tv
+  Tv,
+  Search,
+  Bell,
+  SlidersHorizontal,
+  User,
+  Plus,
+  Trash2,
+  Copy,
+  FolderSync
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { Toaster, toast } from 'react-hot-toast';
+import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 interface ChatMessage {
   id: string;
@@ -44,7 +54,7 @@ interface ChatMessage {
 interface TimelineEvent {
   id: string;
   time: string;
-  type: 'hype' | 'game_request' | 'question_spike' | 'toxicity_spike' | 'custom';
+  type: 'hype' | 'game_request' | 'question_spike' | 'toxicity_spike' | 'custom' | 'clip_moment';
   description: string;
 }
 
@@ -61,6 +71,22 @@ export default function Dashboard() {
   const [isConnected, setIsConnected] = useState(false);
   const [isUsingFallback, setIsUsingFallback] = useState(false);
   
+  // Navigation Architecture
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState<'hud' | 'live' | 'obs' | 'ai' | 'clips' | 'analytics' | 'recaps'>('hud');
+  
+  // Global states & Modals
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'obs' | 'ai' | 'appearance' | 'notifications' | 'keyboard'>('general');
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [activeTheme, setActiveTheme] = useState<'cyber-green' | 'purple-neon' | 'blue-aurora' | 'red-crimson'>('cyber-green');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Floating AI Orb Suggestions
+  const [showOrbTooltip, setShowOrbTooltip] = useState(false);
+
   // Stream Session States
   const [streamerName, setStreamerName] = useState('KickStreamer');
   const [theme, setTheme] = useState('General Chat');
@@ -68,9 +94,9 @@ export default function Dashboard() {
   const [instructions, setInstructions] = useState('');
   const [mode, setMode] = useState<'demo' | 'live'>('demo');
   
-  // Dashboard UI States
+  // Dashboard UI Data States
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [aiSummary, setAiSummary] = useState('');
+  const [aiSummary, setAiSummary] = useState('Analyzing chat feed. First insights ready in 20 seconds...');
   const [questions, setQuestions] = useState<Array<{ id: string; question: string; asker: string; importance: string }>>([]);
   const [topics, setTopics] = useState<string[]>([]);
   const [recommendations, setRecommendations] = useState<CoPilotRecommendation[]>([]);
@@ -80,30 +106,76 @@ export default function Dashboard() {
   const [messagesPerMin, setMessagesPerMin] = useState(0);
   const [uptime, setUptime] = useState('00:00:00');
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  const [modAlerts, setModAlerts] = useState<Array<{ id: string; message: string; severity: 'low' | 'medium' | 'high' }>>([]);
+  const [modAlerts, setModAlerts] = useState<Array<{ id: string; message: string; severity: 'low' | 'medium' | 'high'; timestamp?: string }>>([]);
+  
+  // Stream Recap Data
+  const [showRecap, setShowRecap] = useState(false);
+  const [recapTimeline, setRecapTimeline] = useState<TimelineEvent[]>([]);
+  const [recapData, setRecapData] = useState<any>(null);
+  const [pinnedQuestion, setPinnedQuestion] = useState<string | null>(null);
   
   // Custom Chat Inputs
   const [customMsgText, setCustomMsgText] = useState('');
   const [customMsgSender, setCustomMsgSender] = useState('JudgeViewer');
   const [customMsgBadge, setCustomMsgBadge] = useState<'none' | 'vip' | 'sub' | 'mod'>('none');
   
-  // Stream Recap overlay
-  const [showRecap, setShowRecap] = useState(false);
-  const [recapTimeline, setRecapTimeline] = useState<TimelineEvent[]>([]);
-  const [recapData, setRecapData] = useState<any>(null);
-  const [pinnedQuestion, setPinnedQuestion] = useState<string | null>(null);
-  
-  // Dev Tools Panel
+  // Dev Tools Panel Toggle
   const [showDevTools, setShowDevTools] = useState(false);
+  const [aiLastSync, setAiLastSync] = useState<number>(0);
 
-  // Settings Panel & OBS Key configurations
-  const [showSettings, setShowSettings] = useState(false);
+  // Settings Configuration States
   const [streamUrl, setStreamUrl] = useState('rtmps://stream.kick.com/live');
   const [streamKey, setStreamKey] = useState('');
+  const [backupKey, setBackupKey] = useState('');
+  const [kickChannelId, setKickChannelId] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('You are StreamMind AI, a live creator co-pilot for KICK streams.');
+  const [questionPriority, setQuestionPriority] = useState<'high' | 'medium' | 'low'>('high');
+  const [vipInput, setVipInput] = useState('');
+  const [vips, setVips] = useState<string[]>(['SKYGOD07', 'KickNinja', 'ModeratorBot']);
+  const [blockedWordInput, setBlockedWordInput] = useState('');
+  const [blockedWords, setBlockedWords] = useState<string[]>(['scam', 'hack', 'cheat', 'robux']);
+  const [toxicityThreshold, setToxicityThreshold] = useState(0.6);
+
+  // Live status states
   const [isLive, setIsLive] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
   const [category, setCategory] = useState('');
   const [isCheckingLive, setIsCheckingLive] = useState(false);
+
+  // Sparkline Chart Data for Hype Velocity
+  const [hypeSparklineData, setHypeSparklineData] = useState<any[]>([
+    { value: 10 }, { value: 15 }, { value: 12 }, { value: 20 }, { value: 18 }, { value: 30 }, { value: 25 }, { value: 40 }, { value: 35 }, { value: 50 }
+  ]);
+
+  // Timers and references
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const uptimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const fallbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  // Click outside to close ChatGPT profile menu
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setShowProfileMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Keyboard shortcut listeners (CTRL + K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowSearchModal(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Fetch KICK Live Status from public API
   const checkLiveStatus = useCallback(async (channel: string) => {
@@ -149,16 +221,6 @@ export default function Dashboard() {
     }
   }, [checkLiveStatus]);
 
-  // AI sync state
-  const [aiLastSync, setAiLastSync] = useState<number>(0);
-  
-  // Timers and references
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-  const uptimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const fallbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const socketRef = useRef<Socket | null>(null);
-  
   // Uptime ticker
   useEffect(() => {
     let seconds = 0;
@@ -175,7 +237,7 @@ export default function Dashboard() {
     };
   }, []);
 
-  // Scroll to bottom of chat only if user is already near the bottom
+  // Scroll to bottom of chat
   useEffect(() => {
     const container = chatContainerRef.current;
     if (container) {
@@ -193,9 +255,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (mode !== 'live' || !streamerName || streamerName === 'DemoStreamer' || streamerName === 'KickGamer') return;
     
-    // Check status immediately
     checkLiveStatus(streamerName);
-    
     const interval = setInterval(() => {
       checkLiveStatus(streamerName);
     }, 30000);
@@ -205,7 +265,6 @@ export default function Dashboard() {
 
   // Main Socket Connection & Fallback Init
   useEffect(() => {
-    // Load config from localStorage
     const savedConfigStr = localStorage.getItem('streammind_session_config');
     let config = {
       streamerName: 'DemoStreamer',
@@ -228,7 +287,6 @@ export default function Dashboard() {
       }
     }
 
-    // Connect to local custom Socket.io server
     const socketUrl = 'http://localhost:3001';
     const socketInstance = io(socketUrl, {
       timeout: 4000,
@@ -285,6 +343,11 @@ export default function Dashboard() {
       setHypeLevel(data.hypeLevel);
       setHypeScore(data.hypeScore);
       if (data.messagesPerMin !== undefined) setMessagesPerMin(data.messagesPerMin);
+      
+      setHypeSparklineData(prev => {
+        return [...prev.slice(1), { value: data.hypeScore }];
+      });
+      
       setAiLastSync(Date.now());
     });
 
@@ -297,11 +360,15 @@ export default function Dashboard() {
     });
 
     socketInstance.on('mod-alert', (alert: any) => {
-      setModAlerts(prev => [alert, ...prev.slice(0, 15)]);
+      const formattedAlert = { 
+        ...alert, 
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+      };
+      setModAlerts(prev => [formattedAlert, ...prev.slice(0, 15)]);
       toast(alert.message, {
         icon: alert.severity === 'high' ? '🚨' : '⚠️',
         style: {
-          background: '#11151D',
+          background: '#090C12',
           color: '#fff',
           border: `1px solid ${alert.severity === 'high' ? '#EF4444' : '#F59E0B'}`
         }
@@ -314,7 +381,6 @@ export default function Dashboard() {
           setQuestions(prev => prev.filter(q => q.id !== data.id));
           toast.success('Question marked addressed!');
         } else if (data.action === 'pin') {
-          // Find question text to pin
           setQuestions(prev => {
             const found = prev.find(q => q.id === data.id);
             if (found) setPinnedQuestion(found.question);
@@ -338,7 +404,6 @@ export default function Dashboard() {
       toast.success('Session completed.');
     });
 
-    // Load Streamer profile and stream status
     loadProfileSettings();
 
     return () => {
@@ -399,22 +464,27 @@ export default function Dashboard() {
 
       setChatMessages(prev => [...prev.slice(-60), newMsg]);
 
+      // Handle spam alerts
       if (isSpam && Math.random() < 0.3) {
         setModAlerts(prev => [{
           id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           message: `Spam alert from @${rSender}: "${rText}"`,
-          severity: 'medium'
+          severity: 'medium',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }, ...prev.slice(0, 15)]);
       }
       
+      // Handle toxicity alerts
       if (isToxic && Math.random() < 0.4) {
         setModAlerts(prev => [{
           id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           message: `Toxicity: "${rText}" by @${rSender}`,
-          severity: 'high'
+          severity: 'high',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }, ...prev.slice(0, 15)]);
       }
 
+      // Add questions list
       if (isQuestion && !isSpam && Math.random() < 0.5) {
         setQuestions(prev => {
           if (prev.some(q => q.question === rText)) return prev;
@@ -423,181 +493,97 @@ export default function Dashboard() {
             question: rText,
             asker: rSender,
             importance: Math.random() > 0.5 ? 'high' : 'medium'
-          }].slice(0, 8);
+          }];
         });
       }
 
-      if (messageCounter % 8 === 0) {
-        const scores = [35, 68, 89, 24];
-        const newScore = scores[Math.floor(Math.random() * scores.length)];
-        setHypeScore(newScore);
-        setHypeLevel(newScore > 70 ? 'high' : newScore > 40 ? 'medium' : 'low');
-        setMessagesPerMin(Math.floor(Math.random() * 40) + 15);
+      // Update mock sparkline and summary details
+      if (messageCounter % 4 === 0) {
+        setHypeScore(prev => {
+          const nextVal = Math.min(100, Math.max(0, prev + (Math.random() > 0.45 ? 12 : -10)));
+          setHypeLevel(nextVal > 70 ? 'high' : nextVal > 30 ? 'medium' : 'low');
+          setHypeSparklineData(prevSpark => [...prevSpark.slice(1), { value: nextVal }]);
+          return nextVal;
+        });
 
-        const summaryPools = [
-          `Chat is asking about your stream: ${config.theme}. Keyboard switches and lobby invitations trending.`,
-          `Audience discussing giveaways. Positive sentiment has risen due to gameplay hype.`,
-          `Brief spam flood intercepted. Rule engine flagged scam link domains.`
-        ];
-        setAiSummary(summaryPools[Math.floor(Math.random() * summaryPools.length)]);
-
-        setRecommendations([
-          {
-            tip: 'Viewers want to join the lobby.',
-            action: 'Pin discord lobby room link and run a queue poll.',
-            confidence: 94,
-            reason: 'Multiple viewers requested to play together.'
-          },
-          {
-            tip: 'Positive sentiment is high.',
-            action: 'Do a quick subscriber shoutout.',
-            confidence: 88,
-            reason: 'Chat is in a great mood — reinforce it.'
-          }
-        ]);
-
-        setTopics(config.theme.toLowerCase().includes('valorant') 
-          ? ['Lobby', 'Sensitivity', 'Aim', 'Giveaway', 'Vandal'] 
-          : ['Coding', 'Gemini', 'SQLite', 'Dashboard', 'Vercel']
-        );
-
-        setAiLastSync(Date.now());
-
-        if (newScore > 75) {
+        // Insert mock timeline events
+        if (Math.random() < 0.25) {
+          const eventsList = [
+            { type: 'hype' as const, desc: '🔥 Hype wave in chat! Viewer engagement spiked.' },
+            { type: 'game_request' as const, desc: '🎮 Viewers requesting gameplay lobby queue change.' },
+            { type: 'clip_moment' as const, desc: '🎬 AI Clip Opportunity Detected: repeated "CLIP IT" in chat feed.' }
+          ];
+          const choice = eventsList[Math.floor(Math.random() * eventsList.length)];
           setTimeline(prev => [{
-            id: `event-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            id: `evt-${Date.now()}`,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            type: 'hype',
-            description: '🔥 Huge hype spike detected!'
+            type: choice.type,
+            description: choice.desc
           }, ...prev]);
         }
       }
-    }, 1800);
-  }, []);
+    }, 2800);
+  }, [chatMessages.length, timeline]);
 
-  // One-Click Action handler
   const handleAction = (type: 'question' | 'recommendation', action: 'addressed' | 'pin' | 'ignore', id: string) => {
     if (isConnected && socket) {
       socket.emit('one-click-action', { type, action, id });
     } else {
       if (type === 'question') {
-        if (action === 'addressed') {
+        if (action === 'addressed' || action === 'ignore') {
           setQuestions(prev => prev.filter(q => q.id !== id));
-          toast.success('Question marked addressed!');
+          toast.success(action === 'addressed' ? 'Question addressed!' : 'Question dismissed.');
         } else if (action === 'pin') {
-          const q = questions.find(item => item.id === id);
-          if (q) {
-            setPinnedQuestion(q.question);
-            toast.success('Question pinned to HUD!');
-          }
-        } else if (action === 'ignore') {
-          setQuestions(prev => prev.filter(q => q.id !== id));
-          toast.success('Question dismissed.');
+          const found = questions.find(q => q.id === id);
+          if (found) setPinnedQuestion(found.question);
+          toast.success('Question pinned to HUD!');
         }
-      } else if (type === 'recommendation') {
+      } else {
         setRecommendations(prev => prev.filter((_, idx) => idx !== Number(id)));
-        toast.success('Recommendation actioned!');
+        toast.success('Recommendation addressed!');
       }
     }
   };
 
-  // Developer spike triggers
-  const triggerSpike = (spikeType: 'hype' | 'spam' | 'toxic') => {
+  // Trigger simulated spike from dev tools
+  const triggerSpike = (type: 'hype' | 'spam' | 'toxic') => {
     if (isConnected && socket) {
-      socket.emit(`trigger-${spikeType}-spike`);
-      toast.success(`${spikeType} spike triggered`);
+      socket.emit(`trigger-${type}-spike`);
     } else {
-      toast.success(`Simulated ${spikeType} spike`);
       const nowString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-      if (spikeType === 'hype') {
-        setHypeScore(95);
+      if (type === 'hype') {
+        setHypeScore(85);
         setHypeLevel('high');
-        setSentiment({ positive: 80, neutral: 15, negative: 5 });
-        
-        const spikeMsgs: ChatMessage[] = Array.from({ length: 6 }).map((_, i) => ({
-          id: `spike-hype-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          sender: `HypeLover_${i}`,
-          text: 'POGGERS LETS GOOOO !!! 🔥🔥🔥🚀',
-          badge: 'sub' as const,
-          isSpam: false,
-          isQuestion: false,
-          sentiment: 'positive' as const,
-          toxicity: 0.0,
-          timestamp: nowString
-        }));
-        setChatMessages(prev => [...prev, ...spikeMsgs]);
-        
         setTimeline(prev => [{
-          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          id: `evt-hype-${Date.now()}`,
           time: nowString,
-          type: 'hype' as const,
-          description: '🔥 Huge hype spike detected!'
+          type: 'hype',
+          description: '🔥 Hype wave in chat! Viewer engagement spiked.'
         }, ...prev]);
-
-      } else if (spikeType === 'spam') {
-        setSentiment({ positive: 30, neutral: 30, negative: 40 });
-        const spikeMsgs: ChatMessage[] = Array.from({ length: 5 }).map((_, i) => ({
-          id: `spike-spam-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          sender: `BotSpam_${i}`,
-          text: 'CLAIM FREE ROBUX AT scam-robux-link.xyz !!!',
-          badge: 'none' as const,
-          isSpam: true,
-          isQuestion: false,
-          sentiment: 'negative' as const,
-          toxicity: 0.85,
-          timestamp: nowString
-        }));
-        setChatMessages(prev => [...prev, ...spikeMsgs]);
-
+        toast.success('Simulated Hype wave injected.');
+      } else if (type === 'spam') {
         setModAlerts(prev => [{
-          id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          message: 'Spam spike: Scam URL links blocked.',
-          severity: 'medium'
-        }, ...prev]);
-
-        setTimeline(prev => [{
-          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          time: nowString,
-          type: 'toxicity_spike' as const,
-          description: '⚠️ Spam flood detected.'
-        }, ...prev]);
-
-      } else if (spikeType === 'toxic') {
-        setSentiment({ positive: 20, neutral: 30, negative: 50 });
-        const spikeMsgs: ChatMessage[] = Array.from({ length: 4 }).map((_, i) => ({
-          id: `spike-toxic-${i}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          sender: `ToxicTroll_${i}`,
-          text: 'streamer is absolute garbage at this game noob',
-          badge: 'none' as const,
-          isSpam: false,
-          isQuestion: false,
-          sentiment: 'negative' as const,
-          toxicity: 0.8,
+          id: `alert-spam-${Date.now()}`,
+          message: 'Moderation Warning: Scam links detected in chat.',
+          severity: 'medium',
           timestamp: nowString
-        }));
-        setChatMessages(prev => [...prev, ...spikeMsgs]);
-
+        }, ...prev]);
+        toast('Simulated Spam links injected.', { icon: '⚠️' });
+      } else {
         setModAlerts(prev => [{
-          id: `alert-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          message: 'High toxicity detected in chat.',
-          severity: 'high'
+          id: `alert-toxic-${Date.now()}`,
+          message: 'Toxicity Warning: Offensive messages increasing in feed.',
+          severity: 'high',
+          timestamp: nowString
         }, ...prev]);
-
-        setTimeline(prev => [{
-          id: `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-          time: nowString,
-          type: 'toxicity_spike' as const,
-          description: '🚨 Toxic messages increasing.'
-        }, ...prev]);
+        toast.error('Simulated Toxicity wave injected.');
       }
     }
   };
 
-  // Send a custom chat message
+  // Send custom chat message
   const sendCustomMessage = () => {
     if (!customMsgText.trim()) return;
-
     if (isConnected && socket) {
       socket.emit('send-chat-message', {
         sender: customMsgSender,
@@ -606,43 +592,40 @@ export default function Dashboard() {
       });
     } else {
       const newMsg: ChatMessage = {
-        id: `custom-msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: `custom-msg-${Date.now()}`,
         sender: customMsgSender,
         text: customMsgText,
         badge: customMsgBadge,
-        isSpam: customMsgText.includes('bit.ly'),
+        isSpam: customMsgText.includes('bit.ly') || customMsgText.includes('.net'),
         isQuestion: customMsgText.includes('?'),
-        sentiment: 'neutral',
-        toxicity: 0.0,
+        sentiment: customMsgText.includes('🔥') ? 'positive' : customMsgText.includes('noob') ? 'negative' : 'neutral',
+        toxicity: customMsgText.includes('noob') ? 0.8 : 0.0,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setChatMessages(prev => [...prev, newMsg]);
-      
       if (newMsg.isQuestion) {
         setQuestions(prev => [{
-          id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          id: `q-${Date.now()}`,
           question: newMsg.text,
           asker: newMsg.sender,
           importance: 'high'
         }, ...prev]);
       }
     }
-
     setCustomMsgText('');
   };
 
-  // End Session
+  // End stream session
   const handleEndSession = () => {
     if (isConnected && socket) {
       socket.emit('end-session');
     } else {
       if (fallbackIntervalRef.current) clearInterval(fallbackIntervalRef.current);
-      
       const nowString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const finalEvents = [
         ...timeline,
         {
-          id: `evt-end-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          id: `evt-end-${Date.now()}`,
           time: nowString,
           type: 'custom' as const,
           description: '🔴 Stream ended. Final recap compiled.'
@@ -664,635 +647,1077 @@ export default function Dashboard() {
     }
   };
 
-  // Format "time ago" for AI sync
-  const getAiSyncLabel = () => {
-    if (!aiLastSync) return 'Waiting for data...';
-    const secsAgo = Math.floor((Date.now() - aiLastSync) / 1000);
-    if (secsAgo < 5) return 'Just now';
-    if (secsAgo < 60) return `${secsAgo}s ago`;
-    return `${Math.floor(secsAgo / 60)}m ago`;
+  // Dynamic Theme Styling
+  const getThemeClass = () => {
+    return `theme-${activeTheme}`;
   };
 
-  // Hype color
-  const hypeColor = hypeLevel === 'high' ? '#EF4444' : hypeLevel === 'medium' ? '#F59E0B' : '#53FC18';
+  // UI Helpers: Calculate Community Health
+  const calculateCommunityHealth = () => {
+    const sentimentBonus = sentiment.positive * 0.5;
+    const neutralBonus = sentiment.neutral * 0.2;
+    const toxicityDeduction = modAlerts.filter(a => a.severity === 'high').length * 4;
+    return Math.max(0, Math.min(100, Math.round(50 + sentimentBonus + neutralBonus - toxicityDeduction)));
+  };
+
+  const communityScore = calculateCommunityHealth();
+  const latestClipOpportunity = timeline.find(e => e.type === 'clip_moment');
+
+  // Linear search handler
+  const getFilteredItems = () => {
+    if (!searchQuery.trim()) return [];
+    const query = searchQuery.toLowerCase();
+    
+    const matchedMsgs = chatMessages
+      .filter(m => m.text.toLowerCase().includes(query) || m.sender.toLowerCase().includes(query))
+      .map(m => ({ type: 'chat', label: `@${m.sender}: "${m.text}"`, link: 'hud' }));
+      
+    const matchedQuestions = questions
+      .filter(q => q.question.toLowerCase().includes(query) || q.asker.toLowerCase().includes(query))
+      .map(q => ({ type: 'question', label: `Question from @${q.asker}: "${q.question}"`, link: 'hud' }));
+
+    const matchedEvents = timeline
+      .filter(e => e.description.toLowerCase().includes(query))
+      .map(e => ({ type: 'event', label: `[Event] ${e.description}`, link: 'hud' }));
+
+    return [...matchedMsgs, ...matchedQuestions, ...matchedEvents].slice(0, 6);
+  };
 
   return (
-    <div className="h-screen bg-kick-dark text-gray-100 flex flex-col overflow-hidden">
+    <div className={`h-screen flex overflow-hidden bg-kick-dark text-gray-100 ${getThemeClass()} font-sans relative`}>
       <Toaster position="top-right" />
+      
+      {/* Radial Glass Accent Spot */}
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-kick-green-glow rounded-full blur-[140px] pointer-events-none z-0" />
 
-      {/* ──── TOP BAR ──── */}
-      <header className="h-14 border-b border-kick-border bg-kick-panel/60 backdrop-blur px-4 md:px-6 flex items-center justify-between shrink-0 z-20">
-        
-        {/* Left: Logo + Status */}
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-kick-green flex items-center justify-center font-black text-kick-dark text-sm">S</div>
-          <span className="text-sm font-extrabold text-white hidden sm:inline">StreamMind AI</span>
-          
-          <div className="h-4 w-px bg-kick-border" />
-          
-          <div className="flex items-center gap-1.5">
-            <div className={`w-2 h-2 rounded-full ${
-              (mode === 'demo' || isLive) ? 'bg-red-500 animate-pulse shadow-[0_0_8px_#EF4444]' : 'bg-gray-500'
-            }`} />
-            <span className="text-xs font-bold text-white uppercase">
-              {(mode === 'demo' || isLive) ? 'LIVE' : 'OFFLINE'}
-            </span>
-          </div>
-
-          {(mode === 'demo' || isLive) && (
-            <>
-              <div className="h-4 w-px bg-kick-border hidden sm:block" />
-              <div className="hidden sm:flex items-center gap-1 text-xs text-gray-400">
-                <Clock className="w-3 h-3" />
-                <span className="font-mono font-bold text-white">{uptime}</span>
-              </div>
-            </>
-          )}
-
-          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-            mode === 'demo' 
-              ? 'bg-kick-green/10 text-kick-green border border-kick-green/20' 
-              : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-          }`}>
-            {mode === 'demo' ? 'DEMO' : 'LIVE KICK'}
-          </span>
-
-          {isUsingFallback && (
-            <span className="px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 text-[9px] font-bold animate-pulse">
-              OFFLINE
-            </span>
-          )}
-        </div>
-
-        {/* Right: Stats + Controls */}
-        <div className="flex items-center gap-3">
-          <div className="hidden md:flex items-center gap-2 text-xs text-gray-400">
-            <Activity className="w-3.5 h-3.5 text-kick-green" />
-            <span className="font-bold text-white">{messagesPerMin}</span>
-            <span>msg/min</span>
-          </div>
-
-          <div className="h-4 w-px bg-kick-border hidden md:block" />
-
-          <button 
-            onClick={() => setShowSettings(!showSettings)}
-            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-              showSettings 
-                ? 'bg-kick-green/10 border-kick-green/30 text-kick-green' 
-                : 'bg-kick-panel border-kick-border text-gray-400 hover:text-white'
-            }`}
-            title="OBS & Stream Settings"
-          >
-            <Sliders className="w-3.5 h-3.5" />
-          </button>
-
-          <button 
-            onClick={() => setShowDevTools(!showDevTools)}
-            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-              showDevTools 
-                ? 'bg-kick-green/10 border-kick-green/30 text-kick-green' 
-                : 'bg-kick-panel border-kick-border text-gray-400 hover:text-white'
-            }`}
-            title="Developer Tools"
-          >
-            <Wrench className="w-3.5 h-3.5" />
-          </button>
-
-          {(mode === 'demo' || isLive) ? (
+      {/* ──────────────────────────────────────────────────────────── */}
+      {/* LAYER 1: GLOBAL NAVIGATION RAIL (Collapsible Left Sidebar)   */}
+      {/* ──────────────────────────────────────────────────────────── */}
+      <aside 
+        style={{ width: isSidebarCollapsed ? '72px' : '280px' }}
+        className="glass-sidebar h-full flex flex-col justify-between shrink-0 transition-all duration-300 cubic-bezier(.4,0,.2,1) z-30 select-none relative"
+      >
+        <div className="flex flex-col">
+          {/* Logo Section */}
+          <div className="h-16 flex items-center justify-between px-4 border-b border-kick-border">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-8 h-8 rounded-xl bg-kick-green flex items-center justify-center font-black text-kick-dark shrink-0">S</div>
+              {!isSidebarCollapsed && (
+                <span className="text-sm font-black text-white tracking-wider whitespace-nowrap">
+                  StreamMind <span className="text-kick-green">AI</span>
+                </span>
+              )}
+            </div>
             <button 
-              onClick={handleEndSession}
-              className="bg-red-500/80 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer"
+              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-kick-border/40 cursor-pointer"
+              title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             >
-              End Stream
+              <Menu className="w-4 h-4" />
             </button>
-          ) : (
-            <button 
-              onClick={async () => {
-                toast.loading('Checking KICK broadcast status...');
-                await checkLiveStatus(streamerName);
-              }}
-              className="bg-kick-green text-kick-dark px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer hover:shadow-[0_0_10px_rgba(83,252,24,0.4)]"
-            >
-              Start Session
-            </button>
-          )}
-        </div>
-      </header>
-
-      {/* ──── PINNED QUESTION HUD ──── */}
-      {pinnedQuestion && (
-        <div className="bg-kick-green/10 border-b border-kick-green/30 px-4 py-2 flex items-center justify-between text-sm shrink-0">
-          <div className="flex items-center gap-2 text-kick-green font-semibold text-xs">
-            <Pin className="w-3.5 h-3.5 fill-kick-green" />
-            <span className="uppercase">Pinned:</span>
-            <span className="text-white font-medium italic">"{pinnedQuestion}"</span>
-          </div>
-          <button onClick={() => setPinnedQuestion(null)} className="text-gray-400 hover:text-white cursor-pointer">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      {/* ──── MAIN 2-COLUMN LAYOUT ──── */}
-      <div className="flex-1 flex overflow-hidden">
-        
-        {/* ═══ LEFT COLUMN: Live Chat ═══ */}
-        <div className="w-full lg:w-[38%] xl:w-[35%] flex flex-col border-r border-kick-border">
-          
-          {/* Chat Header */}
-          <div className="px-4 py-2.5 border-b border-kick-border bg-kick-panel/30 flex items-center justify-between shrink-0">
-            <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-kick-green" />
-              Live Chat
-            </h3>
-            <span className="text-[10px] text-gray-500 font-mono">{chatMessages.length} msgs</span>
           </div>
 
-          {/* Chat Messages */}
-          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
-            {chatMessages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-gray-500">
-                <MessageSquare className="w-6 h-6 mb-2 stroke-[1.5] opacity-50" />
-                <p className="text-xs">Waiting for chat messages...</p>
-              </div>
-            ) : (
-              chatMessages.map((msg) => (
-                <div 
-                  key={msg.id} 
-                  className={`px-2.5 py-2 rounded-lg border transition-all text-[13px] ${
-                    msg.isSpam 
-                      ? 'bg-yellow-950/15 border-yellow-500/20 opacity-60' 
-                      : msg.toxicity > 0.5 
-                        ? 'bg-red-950/15 border-red-500/20'
-                        : 'bg-transparent border-transparent hover:bg-kick-panel/30'
+          {/* Navigation Links */}
+          <nav className="p-3 space-y-1.5">
+            {[
+              { id: 'hud', label: 'Dashboard HUD', icon: Tv },
+              { id: 'obs', label: 'OBS Studio', icon: Sliders },
+              { id: 'ai', label: 'AI Rules', icon: Wrench },
+              { id: 'recaps', label: 'Stream Recaps', icon: Award }
+            ].map(item => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    if (item.id === 'obs' || item.id === 'ai') {
+                      setSettingsActiveTab(item.id === 'obs' ? 'obs' : 'ai');
+                      setShowSettingsModal(true);
+                    } else {
+                      setActiveTab(item.id as any);
+                    }
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all font-semibold text-xs cursor-pointer group relative ${
+                    isActive 
+                      ? 'bg-kick-green/10 text-kick-green border border-kick-green/20' 
+                      : 'text-gray-400 hover:bg-kick-panel-hover hover:text-white border border-transparent'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    {msg.badge === 'mod' && (
-                      <Shield className="w-3 h-3 text-red-400" />
-                    )}
-                    {msg.badge === 'vip' && (
-                      <span className="text-[8px] text-purple-400 font-black">VIP</span>
-                    )}
-                    {msg.badge === 'sub' && (
-                      <span className="text-[8px] text-kick-green font-black">SUB</span>
-                    )}
-                    <span className="text-xs font-bold text-kick-green">{msg.sender}</span>
-                    <span className="text-[10px] text-gray-600 ml-auto font-mono">{msg.timestamp}</span>
-                  </div>
-                  <p className="text-gray-200 leading-relaxed break-words">{msg.text}</p>
-                  {msg.isSpam && (
-                    <span className="text-[9px] text-yellow-500 font-bold mt-0.5 inline-block">⚠ SPAM</span>
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {!isSidebarCollapsed && <span>{item.label}</span>}
+                  
+                  {/* Collapsed Tooltip */}
+                  {isSidebarCollapsed && (
+                    <div className="absolute left-16 bg-kick-dark border border-kick-border text-[10px] text-white px-2.5 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-all delay-100 whitespace-nowrap shadow-xl z-50">
+                      {item.label}
+                    </div>
                   )}
-                  {msg.toxicity > 0.5 && !msg.isSpam && (
-                    <span className="text-[9px] text-red-400 font-bold mt-0.5 inline-block">🚨 TOXIC {(msg.toxicity * 100).toFixed(0)}%</span>
-                  )}
-                </div>
-              ))
-            )}
-            <div ref={chatEndRef} />
-          </div>
-
-          {/* Chat Input */}
-          <div className="p-3 border-t border-kick-border bg-kick-panel/20 shrink-0">
-            <div className="flex gap-2">
-              <input 
-                type="text"
-                placeholder="Type a message..."
-                value={customMsgText}
-                onChange={(e) => setCustomMsgText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendCustomMessage()}
-                className="flex-1 px-3 py-2 rounded-lg bg-kick-dark border border-kick-border text-white text-xs placeholder-gray-500 focus:outline-none focus:border-kick-green/50"
-              />
-              <button 
-                onClick={sendCustomMessage}
-                className="p-2 rounded-lg bg-kick-green text-kick-dark hover:shadow-[0_0_8px_rgba(83,252,24,0.3)] transition-all cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        {/* ═══ RIGHT COLUMN: AI Insights ═══ */}
-        <div className="hidden lg:flex flex-1 flex-col overflow-y-auto p-4 gap-4">
-          
-          {/* Row 1: AI Summary + Hype Meter */}
-          <div className="grid grid-cols-3 gap-4">
-            {/* AI Summary (takes 2 cols) */}
-            <div className="col-span-2 glass-panel rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-kick-green" />
-                  AI Stream Summary
-                </h3>
-                <span className="flex items-center gap-1 text-[10px] text-gray-500">
-                  <RefreshCw className={`w-3 h-3 ${aiLastSync ? 'text-kick-green' : 'text-gray-600'}`} />
-                  {getAiSyncLabel()}
-                </span>
+        {/* Bottom Profile dropdown (ChatGPT style) */}
+        <div className="p-3 border-t border-kick-border relative" ref={profileMenuRef}>
+          <div 
+            onClick={() => setShowProfileMenu(!showProfileMenu)}
+            className="flex items-center justify-between p-2 rounded-2xl hover:bg-kick-panel-hover cursor-pointer transition-all border border-transparent hover:border-kick-border"
+          >
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              <div className="w-8 h-8 rounded-full bg-kick-green/20 border border-kick-green/40 flex items-center justify-center font-bold text-kick-green text-xs shrink-0 uppercase">
+                {streamerName.slice(0,2)}
               </div>
-              {aiSummary ? (
-                <p className="text-gray-300 text-xs leading-relaxed bg-kick-dark/30 p-3 rounded-lg border border-kick-border/30 italic">
-                  "{aiSummary}"
-                </p>
-              ) : (
-                <div className="text-gray-500 text-xs bg-kick-dark/30 p-3 rounded-lg border border-kick-border/30 flex items-center gap-2">
-                  <RefreshCw className="w-3 h-3 animate-spin" />
-                  Analyzing chat — first summary in ~25 seconds...
+              {!isSidebarCollapsed && (
+                <div className="flex flex-col text-left overflow-hidden">
+                  <span className="text-xs font-bold text-white leading-none whitespace-nowrap">@{streamerName}</span>
+                  <span className="text-[9px] text-gray-500 font-mono mt-0.5 whitespace-nowrap capitalize">{mode} mode</span>
                 </div>
               )}
             </div>
-
-            {/* Hype Meter */}
-            <div className="glass-panel rounded-xl p-4 flex flex-col items-center justify-center">
-              <div className="relative w-16 h-16 flex items-center justify-center mb-1">
-                <svg className="w-full h-full transform -rotate-90">
-                  <circle cx="32" cy="32" r="26" stroke="#222C3A" strokeWidth="5" fill="transparent" />
-                  <circle 
-                    cx="32" cy="32" r="26" 
-                    stroke={hypeColor} strokeWidth="5" fill="transparent" 
-                    strokeDasharray={163.4}
-                    strokeDashoffset={163.4 - (163.4 * hypeScore) / 100}
-                    className="transition-all duration-700"
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center">
-                  <span className="text-lg font-black text-white">{hypeScore}%</span>
-                </div>
-              </div>
-              <span className="text-[10px] font-bold uppercase" style={{ color: hypeColor }}>{hypeLevel} HYPE</span>
-              <div className="flex items-center gap-0.5 mt-1.5 w-full">
-                <div className={`h-1 flex-1 rounded ${hypeLevel === 'low' ? 'bg-kick-green' : 'bg-kick-border'}`} />
-                <div className={`h-1 flex-1 rounded ${hypeLevel === 'medium' ? 'bg-yellow-500' : 'bg-kick-border'}`} />
-                <div className={`h-1 flex-1 rounded ${hypeLevel === 'high' ? 'bg-red-500 animate-pulse' : 'bg-kick-border'}`} />
-              </div>
-            </div>
+            {!isSidebarCollapsed && <ChevronUp className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
           </div>
 
-          {/* Row 2: Questions + Co-Pilot Advisor */}
-          <div className="grid grid-cols-2 gap-4">
-            {/* Unaddressed Questions */}
-            <div className="glass-panel rounded-xl flex flex-col max-h-72">
-              <div className="px-4 py-2.5 border-b border-kick-border flex items-center justify-between shrink-0">
-                <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
-                  <HelpCircle className="w-3.5 h-3.5 text-kick-green" />
-                  Questions
-                </h3>
-                {questions.length > 0 && (
-                  <span className="text-[10px] bg-kick-green/10 text-kick-green border border-kick-green/20 px-1.5 py-0.5 rounded font-bold">
-                    {questions.length}
+          {/* ChatGPT profile dropdown popup */}
+          {showProfileMenu && (
+            <div className="absolute bottom-16 left-3 right-3 bg-[#090C12]/95 backdrop-blur-2xl border border-kick-border rounded-2xl p-2.5 shadow-2xl flex flex-col gap-1.5 z-40 animate-fade-in-up text-left">
+              <div className="px-2.5 py-1.5 border-b border-kick-border/60">
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block">KICK Account Linked</span>
+                <span className="text-xs text-white font-bold block mt-0.5">@{streamerName}</span>
+              </div>
+              <button 
+                onClick={() => { setShowSettingsModal(true); setSettingsActiveTab('general'); setShowProfileMenu(false); }}
+                className="w-full text-left px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:bg-kick-panel-hover hover:text-white cursor-pointer"
+              >
+                Profile Settings
+              </button>
+              <button 
+                onClick={() => { setShowSettingsModal(true); setSettingsActiveTab('appearance'); setShowProfileMenu(false); }}
+                className="w-full text-left px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:bg-kick-panel-hover hover:text-white cursor-pointer"
+              >
+                Keyboard Shortcuts
+              </button>
+              <button 
+                onClick={handleEndSession}
+                className="w-full text-left px-2.5 py-2 rounded-xl text-xs font-semibold text-red-400 hover:bg-red-950/20 cursor-pointer border-t border-kick-border/40 mt-1"
+              >
+                Log Out Session
+              </button>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {/* Main Workspace Frame */}
+      <div className="flex-1 flex flex-col overflow-hidden relative z-10">
+        
+        {/* ──────────────────────────────────────────────────────────── */}
+        {/* LAYER 2: TOP COMMAND BAR (72px)                              */}
+        {/* ──────────────────────────────────────────────────────────── */}
+        <header className="h-[72px] glass-topbar px-6 flex items-center justify-between shrink-0 select-none z-20">
+          {/* Left Breadcrumbs */}
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Dashboard</span>
+            <span className="text-xs text-gray-600">/</span>
+            <span className="text-[11px] font-black text-kick-green uppercase tracking-widest">HUD Mode</span>
+          </div>
+
+          {/* Center search button (Linear Ctrl+K style) */}
+          <div className="flex-1 max-w-md mx-6 hidden sm:block">
+            <button 
+              onClick={() => setShowSearchModal(true)}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-kick-dark/60 border border-kick-border text-gray-500 hover:text-gray-300 hover:border-kick-border/80 transition-all text-xs font-medium cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Search className="w-3.5 h-3.5" />
+                <span>Search everything...</span>
+              </div>
+              <span className="text-[10px] bg-kick-panel border border-kick-border px-1.5 py-0.5 rounded-md font-mono">
+                Ctrl + K
+              </span>
+            </button>
+          </div>
+
+          {/* Right widgets */}
+          <div className="flex items-center gap-3">
+            {/* Live Indicator */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-kick-dark border border-kick-border select-none">
+              <span className={`w-2 h-2 rounded-full ${
+                (mode === 'demo' || isLive) ? 'bg-red-500 animate-pulse shadow-[0_0_8px_#EF4444]' : 'bg-gray-500'
+              }`} />
+              <span className="text-[10px] font-black text-white uppercase leading-none">
+                {(mode === 'demo' || isLive) ? 'LIVE' : 'OFFLINE'}
+              </span>
+            </div>
+
+            {/* Health Score */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-kick-dark border border-kick-border select-none" title="Community Health Score">
+              <span className="text-[10px] text-gray-500 font-bold uppercase">Health:</span>
+              <span className="text-[10px] font-black text-kick-green">{communityScore}/100</span>
+            </div>
+
+            {/* Chat Velocity */}
+            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-kick-dark border border-kick-border select-none" title="Chat Velocity">
+              <Activity className="w-3 h-3 text-kick-green" />
+              <span className="text-[10px] font-black text-white font-mono">{messagesPerMin} msg/min</span>
+            </div>
+
+            {/* Notification button with counter */}
+            <button 
+              onClick={() => setShowNotifications(true)}
+              className="p-2 rounded-xl bg-kick-dark border border-kick-border text-gray-400 hover:text-white relative cursor-pointer"
+            >
+              <Bell className="w-4 h-4" />
+              {modAlerts.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[9px] font-bold">
+                  {modAlerts.length}
+                </span>
+              )}
+            </button>
+
+            {/* Settings button */}
+            <button 
+              onClick={() => setShowSettingsModal(true)}
+              className="p-2 rounded-xl bg-kick-dark border border-kick-border text-gray-400 hover:text-white cursor-pointer"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* ──────────────────────────────────────────────────────────── */}
+        {/* LAYER 3: MAIN HUD WORKSPACE LAYOUT (Bento Grid)              */}
+        {/* ──────────────────────────────────────────────────────────── */}
+        <main className="flex-1 flex overflow-hidden p-6 gap-6 relative select-none">
+          
+          {/* ═══ LEFT PANEL: Live Chat ═══ */}
+          <div className="w-[32%] xl:w-[28%] flex flex-col bento-card select-none">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-kick-border flex items-center justify-between shrink-0 bg-kick-panel/20 rounded-t-3xl">
+              <span className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-kick-green" />
+                Live Chat Feed
+              </span>
+              <span className="text-[9px] text-gray-500 font-mono font-bold bg-kick-dark px-1.5 py-0.5 rounded-lg border border-kick-border">
+                {chatMessages.length} Messages
+              </span>
+            </div>
+
+            {/* Chat Body */}
+            <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 select-text">
+              {chatMessages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-gray-500 py-10">
+                  <MessageSquare className="w-6 h-6 text-kick-green/30 mb-2" />
+                  <p className="text-xs text-gray-400 font-semibold">Waiting for chat...</p>
+                </div>
+              ) : (
+                chatMessages.map(msg => (
+                  <div 
+                    key={msg.id}
+                    className={`p-2.5 rounded-2xl border text-[11px] leading-relaxed transition-all duration-300 text-left ${
+                      msg.isSpam 
+                        ? 'bg-yellow-950/10 border-yellow-500/20' 
+                        : msg.toxicity > toxicityThreshold
+                          ? 'bg-red-950/10 border-red-500/20'
+                          : msg.badge === 'vip'
+                            ? 'bg-purple-950/10 border-purple-500/20'
+                            : 'bg-kick-panel/20 border-kick-border/40 hover:border-kick-border/80'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1 select-none">
+                      {msg.badge === 'mod' && <span className="text-[7.5px] bg-red-500/10 text-red-400 border border-red-500/20 px-1 rounded font-black font-mono">MOD</span>}
+                      {msg.badge === 'sub' && <span className="text-[7.5px] bg-kick-green/10 text-kick-green border border-kick-green/20 px-1 rounded font-black font-mono">SUB</span>}
+                      {msg.badge === 'vip' && <span className="text-[7.5px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1 rounded font-black font-mono">VIP</span>}
+                      <span className="font-extrabold text-kick-green">@{msg.sender}</span>
+                      <span className="text-[9px] text-gray-500 font-mono ml-auto">{msg.timestamp}</span>
+                    </div>
+                    <p className="text-gray-300 font-medium">{msg.text}</p>
+                    
+                    {msg.isSpam && (
+                      <span className="text-[8px] text-yellow-500 font-bold block mt-1.5 select-none">⚠️ Flagged as Link Spam</span>
+                    )}
+                    {msg.toxicity > toxicityThreshold && (
+                      <span className="text-[8px] text-red-500 font-bold block mt-1.5 select-none">🚨 High Toxicity Warning</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Custom dev input */}
+            {mode === 'demo' && (
+              <div className="p-3 border-t border-kick-border bg-kick-dark/30 rounded-b-3xl">
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    placeholder="Inject message text..."
+                    value={customMsgText}
+                    onChange={(e) => setCustomMsgText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && sendCustomMessage()}
+                    className="flex-1 px-3 py-2 rounded-xl bg-kick-dark border border-kick-border text-xs text-white focus:outline-none focus:border-kick-green"
+                  />
+                  <button 
+                    onClick={sendCustomMessage}
+                    className="p-2 rounded-xl bg-kick-green text-kick-dark hover:shadow-[0_0_10px_var(--neon-glow)] transition-all cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ═══ RIGHT COLUMN: Bento HUD cards ═══ */}
+          <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+            
+            {/* Row 1: AI Attention Radar + AI Producer (Bento) */}
+            <div className="grid grid-cols-2 gap-6 min-h-0 flex-1">
+              
+              {/* AI Attention Radar (BENTO HERO) */}
+              <div className="bento-card flex flex-col">
+                <div className="px-5 py-4 border-b border-kick-border bg-kick-panel/20 rounded-t-3xl flex items-center justify-between shrink-0">
+                  <span className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
+                    AI Attention Radar
                   </span>
-                )}
+                  <span className="text-[9px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded font-black font-mono">
+                    HIGH PRIORITY
+                  </span>
+                </div>
+
+                <div className="flex-1 p-5 overflow-y-auto space-y-3 min-h-0 text-left select-text">
+                  {/* Priority 1: Toxicity alerts */}
+                  {modAlerts.filter(a => a.severity === 'high').length > 0 && (
+                    <div className="p-3.5 rounded-2xl bg-red-950/10 border border-red-500/20 flex gap-2.5 items-start">
+                      <div className="w-2 h-2 rounded-full bg-red-500 animate-ping mt-1.5 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-red-400 block">Toxicity Warning Spike</span>
+                        <p className="text-[11px] text-gray-300 mt-1">Aggressive chatter waves flagged by AI filtering models. Active review suggested.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Priority 2: Pinned questions */}
+                  {questions.length > 0 ? (
+                    <div className="p-3.5 rounded-2xl bg-yellow-950/10 border border-yellow-500/20 flex gap-2.5 items-start">
+                      <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse mt-1.5 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-yellow-500 block">{questions.length} Unaddressed Viewer Questions</span>
+                        <p className="text-[11px] text-gray-300 mt-1">First Priority: Mark addressed or pin to hud to keep engagement high.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-2xl bg-kick-panel/20 border border-kick-border/40 flex gap-2.5 items-start">
+                      <div className="w-2 h-2 rounded-full bg-kick-green mt-1.5 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-gray-400 block">Chat Questions Clear</span>
+                        <p className="text-[11px] text-gray-500 mt-0.5">All viewer questions are currently marked as addressed.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Priority 3: Pinned indicators */}
+                  {pinnedQuestion && (
+                    <div className="p-3.5 rounded-2xl bg-purple-950/10 border border-purple-500/20 flex gap-2.5 items-start">
+                      <Pin className="w-3.5 h-3.5 text-purple-400 fill-purple-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="text-xs font-bold text-purple-400 block">Pinned Dashboard HUD Notice</span>
+                        <p className="text-[11px] text-gray-200 mt-1">"{pinnedQuestion}"</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="flex-1 p-3 overflow-y-auto space-y-2 min-h-0">
-                {questions.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-gray-500 py-6">
-                    <Check className="w-5 h-5 text-kick-green/50 mb-1" />
-                    <p className="text-xs">No pending questions</p>
+              {/* AI Producer Mode */}
+              <div className="bento-card flex flex-col">
+                <div className="px-5 py-4 border-b border-kick-border bg-kick-panel/20 rounded-t-3xl flex items-center justify-between shrink-0">
+                  <span className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-kick-green" />
+                    AI Producer Board
+                  </span>
+                </div>
+
+                <div className="flex-1 p-5 overflow-y-auto space-y-4 min-h-0 text-left">
+                  {recommendations.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-gray-500">
+                      <Sparkles className="w-6 h-6 text-kick-green/30 animate-pulse mb-1.5" />
+                      <p className="text-xs">Gathering stream suggestions...</p>
+                    </div>
+                  ) : (
+                    recommendations.slice(0, 2).map((rec, index) => (
+                      <div key={index} className="p-3.5 rounded-2xl bg-kick-dark/40 border border-kick-border/80 relative">
+                        <div className="absolute top-3.5 right-3.5 bg-kick-green text-kick-dark px-1.5 py-0.5 rounded-lg text-[9px] font-black font-mono">
+                          {rec.confidence}% Confidence
+                        </div>
+                        <h4 className="text-xs font-bold text-kick-green uppercase pr-14 leading-none">{rec.tip}</h4>
+                        <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">{rec.reason}</p>
+                        
+                        <div className="mt-3 flex gap-2">
+                          <button 
+                            onClick={() => handleAction('recommendation', 'addressed', index.toString())}
+                            className="flex-1 py-1.5 rounded-xl bg-kick-green text-kick-dark font-black text-[10px] cursor-pointer hover:shadow-[0_0_8px_var(--neon-glow)] transition-all text-center"
+                          >
+                            Execute
+                          </button>
+                          <button 
+                            onClick={() => handleAction('recommendation', 'ignore', index.toString())}
+                            className="px-3 py-1.5 rounded-xl bg-kick-border text-gray-400 hover:text-white text-[10px] cursor-pointer text-center"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2: AI Summary + Clip Detector + Hype Sparkline */}
+            <div className="grid grid-cols-3 gap-6 shrink-0 h-48">
+              
+              {/* AI Summary */}
+              <div className="bento-card p-4 flex flex-col text-left">
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2 block">AI Live Summary</span>
+                <div className="flex-1 overflow-y-auto text-[11px] text-gray-300 leading-relaxed min-h-0 select-text">
+                  {aiSummary}
+                </div>
+              </div>
+
+              {/* Hype Velocity Wave sparkline */}
+              <div className="bento-card p-4 flex flex-col justify-between text-left">
+                <div>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1 block">Hype Velocity Wave</span>
+                  <div className="flex items-baseline gap-2 mt-1">
+                    <span className="text-2xl font-black text-white font-mono">{hypeScore}/100</span>
+                    <span className="text-[10px] text-kick-green font-bold font-mono">
+                      {hypeLevel === 'high' ? '⚡ SPIKE (+12%)' : '🟢 STABLE'}
+                    </span>
                   </div>
+                </div>
+
+                {/* Animated Recharts Sparkline */}
+                <div className="h-16 w-full mt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={hypeSparklineData}>
+                      <defs>
+                        <linearGradient id="hypeSparkGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="var(--neon-color)" stopOpacity={0.25}/>
+                          <stop offset="95%" stopColor="var(--neon-color)" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <Area 
+                        type="monotone" 
+                        dataKey="value" 
+                        stroke="var(--neon-color)" 
+                        strokeWidth={2}
+                        fillOpacity={1} 
+                        fill="url(#hypeSparkGrad)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* AI Clip Detector */}
+              <div className="bento-card p-4 flex flex-col justify-between text-left">
+                <div>
+                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block">AI Clip Detector</span>
+                  {latestClipOpportunity ? (
+                    <div className="mt-2 space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-kick-green animate-ping shrink-0" />
+                        <span className="text-[11px] font-extrabold text-white">Clip Opportunity Detected</span>
+                      </div>
+                      <p className="text-[10px] text-gray-400 line-clamp-2 mt-1">
+                        {latestClipOpportunity.description}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-gray-500 italic mt-3">
+                      Monitoring chat velocity and emote surges for clip moments...
+                    </p>
+                  )}
+                </div>
+
+                {latestClipOpportunity && (
+                  <button 
+                    onClick={() => {
+                      toast.success('Clip marker generated at ' + uptime);
+                    }}
+                    className="w-full py-1.5 rounded-xl bg-kick-green text-kick-dark text-[10px] font-black hover:shadow-[0_0_8px_var(--neon-glow)] transition-all cursor-pointer text-center"
+                  >
+                    Create OBS Marker
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Row 3: Horizontal Timeline Heatmap Axis */}
+            <div className="bento-card px-5 py-3 shrink-0 flex items-center justify-between text-left">
+              <div className="flex items-center gap-4 w-full">
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider shrink-0">Timeline Heatmap</span>
+                
+                {/* Horizontal scale */}
+                <div className="flex-1 h-2.5 rounded bg-kick-dark/50 border border-kick-border relative select-none">
+                  {/* Hype spikes dots */}
+                  {timeline.map((evt, idx) => {
+                    const colors = evt.type === 'hype' ? 'bg-kick-green shadow-[0_0_6px_#53FC18]' : evt.type === 'clip_moment' ? 'bg-purple-500' : 'bg-yellow-500';
+                    const leftPos = Math.min(95, 10 + idx * 25);
+                    return (
+                      <div 
+                        key={evt.id}
+                        style={{ left: `${leftPos}%` }}
+                        className={`absolute top-0.5 w-1.5 h-1.5 rounded-full ${colors} cursor-pointer group`}
+                        title={evt.description}
+                      >
+                        {/* Heatmap Tooltip */}
+                        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-kick-dark border border-kick-border text-[9px] text-white p-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-xl z-30 pointer-events-none">
+                          <span className="font-bold font-mono mr-1 text-kick-green">[{evt.time}]</span>
+                          {evt.description}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <span className="text-[10px] text-gray-500 font-mono font-bold shrink-0">{uptime}</span>
+              </div>
+            </div>
+
+          </div>
+        </main>
+      </div>
+
+      {/* ──────────────────────────────────────────────────────────── */}
+      {/* FLOATING AI ORB (Pulsating active helper)                     */}
+      {/* ──────────────────────────────────────────────────────────── */}
+      <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 select-none">
+        {showOrbTooltip && (
+          <div className="glass-modal rounded-2xl p-3 max-w-xs text-left animate-fade-in-up">
+            <span className="text-[9px] text-kick-green font-bold uppercase block tracking-wider">AI Producer Notice</span>
+            <p className="text-[11px] text-white mt-1 leading-relaxed">
+              {recommendations.length > 0 
+                ? recommendations[0].action 
+                : "Audience sentiment is positive. Keep driving active chat discussion!"}
+            </p>
+          </div>
+        )}
+        <button 
+          onMouseEnter={() => setShowOrbTooltip(true)}
+          onMouseLeave={() => setShowOrbTooltip(false)}
+          onClick={() => setShowOrbTooltip(!showOrbTooltip)}
+          className="w-12 h-12 rounded-full bg-[#090C18]/90 border border-kick-green/40 flex items-center justify-center shadow-[0_0_20px_var(--neon-glow)] cursor-pointer hover:scale-105 active:scale-95 transition-all animate-pulse-glow"
+        >
+          <Sparkles className="w-5 h-5 text-kick-green" />
+        </button>
+      </div>
+
+      {/* ──────────────────────────────────────────────────────────── */}
+      {/* SLIDE-OVER NOTIFICATION CENTER (420px)                        */}
+      {/* ──────────────────────────────────────────────────────────── */}
+      {showNotifications && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-end animate-fade-in">
+          <div className="w-[420px] h-full glass-slideover p-6 flex flex-col justify-between text-left">
+            <div className="flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between border-b border-kick-border pb-4 shrink-0">
+                <span className="text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-kick-green" />
+                  Notification Center
+                </span>
+                <button onClick={() => setShowNotifications(false)} className="text-gray-400 hover:text-white cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Alerts List */}
+              <div className="flex-1 overflow-y-auto py-4 space-y-3 min-h-0">
+                {modAlerts.length === 0 ? (
+                  <p className="text-xs text-gray-500 italic py-6 text-center">No new alert updates.</p>
                 ) : (
-                  questions.map((q) => (
-                    <div key={q.id} className="p-2.5 bg-kick-panel/40 border border-kick-border rounded-lg hover:border-kick-green/20 transition-all group">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className="text-[10px] text-kick-green font-bold">@{q.asker}</span>
-                        <span className={`text-[9px] px-1 rounded font-bold ${
-                          q.importance === 'high' 
-                            ? 'bg-red-500/10 text-red-400' 
-                            : 'bg-yellow-500/10 text-yellow-500'
-                        }`}>
-                          {q.importance.toUpperCase()}
-                        </span>
-                      </div>
-                      <p className="text-xs text-white leading-relaxed mb-1.5">"{q.question}"</p>
-                      <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                        <button 
-                          onClick={() => handleAction('question', 'addressed', q.id)}
-                          className="p-1 rounded bg-kick-green/10 text-kick-green hover:bg-kick-green hover:text-kick-dark transition-all cursor-pointer" title="Address"
-                        >
-                          <Check className="w-3 h-3" />
-                        </button>
-                        <button 
-                          onClick={() => handleAction('question', 'pin', q.id)}
-                          className="p-1 rounded bg-kick-dark text-gray-400 hover:text-kick-green transition-all cursor-pointer" title="Pin"
-                        >
-                          <Pin className="w-3 h-3" />
-                        </button>
-                        <button 
-                          onClick={() => handleAction('question', 'ignore', q.id)}
-                          className="p-1 rounded bg-kick-dark text-gray-400 hover:text-red-400 transition-all cursor-pointer" title="Dismiss"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
+                  modAlerts.map(alert => (
+                    <div key={alert.id} className={`p-3.5 rounded-2xl border text-[11px] leading-relaxed relative ${
+                      alert.severity === 'high' 
+                        ? 'bg-red-950/10 border-red-500/20 text-red-200' 
+                        : 'bg-yellow-950/10 border-yellow-500/20 text-yellow-200'
+                    }`}>
+                      <span className="absolute top-3.5 right-3.5 text-[9px] text-gray-500 font-mono">
+                        {alert.timestamp || 'Just now'}
+                      </span>
+                      <h4 className="font-bold uppercase tracking-wider pr-14 leading-none">
+                        {alert.severity === 'high' ? '🚨 High Warning' : '⚠️ Moderation Warning'}
+                      </h4>
+                      <p className="text-gray-300 mt-2">{alert.message}</p>
                     </div>
                   ))
                 )}
               </div>
             </div>
 
-            {/* AI Co-Pilot Advisor */}
-            <div className="glass-panel rounded-xl flex flex-col max-h-72">
-              <div className="px-4 py-2.5 border-b border-kick-border flex items-center justify-between shrink-0">
-                <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
-                  <Award className="w-3.5 h-3.5 text-kick-green" />
-                  AI Co-Pilot
-                </h3>
+            <button 
+              onClick={() => { setModAlerts([]); toast.success('Cleared all alerts'); }}
+              className="w-full py-2.5 rounded-xl bg-kick-border hover:bg-kick-border/80 text-white text-xs font-bold transition-all cursor-pointer text-center shrink-0 mt-4"
+            >
+              Clear All Alerts
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────────────────────────────────────────────────── */}
+      {/* CENTERED SPLIT-SIDEBAR SETTINGS MODAL (1100px x 700px)       */}
+      {/* ──────────────────────────────────────────────────────────── */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="w-[1100px] h-[700px] glass-modal rounded-[28px] overflow-hidden flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="h-16 border-b border-kick-border px-6 flex items-center justify-between shrink-0 bg-kick-dark/20 text-left">
+              <span className="text-sm font-extrabold text-white uppercase tracking-widest flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-kick-green" />
+                SaaS Console Settings
+              </span>
+              <button 
+                onClick={() => setShowSettingsModal(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-kick-border/40 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Modal Left Sidebar */}
+              <div className="w-[240px] border-r border-kick-border bg-kick-dark/45 p-4 flex flex-col gap-1 select-none text-left">
+                {[
+                  { id: 'general', label: 'General / Profile' },
+                  { id: 'obs', label: 'OBS Studio Config' },
+                  { id: 'ai', label: 'AI Prompt Rules' },
+                  { id: 'appearance', label: 'Appearance Theme' }
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setSettingsActiveTab(item.id as any)}
+                    className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      settingsActiveTab === item.id 
+                        ? 'bg-kick-green/10 text-kick-green border border-kick-green/20' 
+                        : 'text-gray-400 hover:bg-kick-panel-hover hover:text-white border border-transparent'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
 
-              <div className="flex-1 p-3 overflow-y-auto space-y-2 min-h-0">
-                {recommendations.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-gray-500 py-6">
-                    <Sparkles className="w-5 h-5 text-kick-green/50 mb-1" />
-                    <p className="text-xs">Gathering insights...</p>
-                  </div>
-                ) : (
-                  recommendations.map((rec, index) => (
-                    <div key={index} className="p-3 bg-kick-panel/40 border border-kick-green/20 rounded-lg relative">
-                      <div className="absolute top-2 right-2 bg-kick-green text-kick-dark px-1.5 py-0.5 rounded text-[9px] font-black">
-                        {rec.confidence}%
+              {/* Modal Right Content Panel */}
+              <div className="flex-1 p-8 overflow-y-auto text-left select-text">
+                
+                {/* 1. GENERAL / PROFILE SETTINGS */}
+                {settingsActiveTab === 'general' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-lg font-bold text-white leading-none">General Profile Setup</h3>
+                      <p className="text-xs text-gray-400 mt-1">Configure profile details and linked stream details.</p>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-gray-400">Streamer Display Name</label>
+                        <input 
+                          type="text" 
+                          value={streamerName}
+                          onChange={(e) => setStreamerName(e.target.value)}
+                          className="w-full max-w-md px-3.5 py-2 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green"
+                        />
                       </div>
-                      <h4 className="text-xs font-bold text-kick-green uppercase pr-10">{rec.tip}</h4>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{rec.reason}</p>
-                      <div className="mt-2 flex items-center justify-between gap-2 bg-kick-dark p-1.5 rounded border border-kick-border">
-                        <span className="text-[11px] text-white font-semibold flex-1">{rec.action}</span>
-                        <div className="flex gap-1 shrink-0">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-gray-400">KICK API Channel Reference</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            value={streamerName}
+                            disabled
+                            className="w-full max-w-sm px-3.5 py-2 rounded-xl bg-kick-panel border border-kick-border text-gray-500 text-xs focus:outline-none font-mono"
+                          />
                           <button 
-                            onClick={() => handleAction('recommendation', 'addressed', index.toString())}
-                            className="px-2 py-0.5 rounded bg-kick-green text-kick-dark font-bold text-[9px] cursor-pointer hover:shadow-[0_0_8px_rgba(83,252,24,0.3)]"
+                            onClick={() => checkLiveStatus(streamerName)}
+                            className="px-4 py-2 rounded-xl bg-kick-border hover:bg-kick-border/80 text-xs font-bold transition-all cursor-pointer"
                           >
-                            Do It
-                          </button>
-                          <button 
-                            onClick={() => handleAction('recommendation', 'ignore', index.toString())}
-                            className="px-1.5 py-0.5 rounded bg-kick-border text-gray-400 hover:text-white text-[9px] cursor-pointer"
-                          >
-                            Skip
+                            Sync Status
                           </button>
                         </div>
                       </div>
                     </div>
-                  ))
+                  </div>
                 )}
-              </div>
-            </div>
-          </div>
 
-          {/* Row 3: Sentiment + Trending Topics + Mod Alerts */}
-          <div className="grid grid-cols-3 gap-4">
-            
-            {/* Sentiment */}
-            <div className="glass-panel rounded-xl p-4">
-              <h3 className="font-bold text-white text-xs mb-3 flex items-center gap-1.5">
-                <TrendingUp className="w-3.5 h-3.5 text-kick-green" />
-                Audience Mood
-              </h3>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-kick-green" /> Positive</span>
-                  <span className="font-bold text-white">{sentiment.positive}%</span>
-                </div>
-                <div className="w-full bg-kick-border rounded-full h-1.5">
-                  <div className="bg-kick-green h-1.5 rounded-full transition-all duration-500" style={{ width: `${sentiment.positive}%` }} />
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-gray-500" /> Neutral</span>
-                  <span className="font-bold text-white">{sentiment.neutral}%</span>
-                </div>
-                <div className="w-full bg-kick-border rounded-full h-1.5">
-                  <div className="bg-gray-500 h-1.5 rounded-full transition-all duration-500" style={{ width: `${sentiment.neutral}%` }} />
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500" /> Negative</span>
-                  <span className="font-bold text-white">{sentiment.negative}%</span>
-                </div>
-                <div className="w-full bg-kick-border rounded-full h-1.5">
-                  <div className="bg-red-500 h-1.5 rounded-full transition-all duration-500" style={{ width: `${sentiment.negative}%` }} />
-                </div>
-              </div>
-            </div>
-
-            {/* Trending Topics */}
-            <div className="glass-panel rounded-xl p-4">
-              <h3 className="font-bold text-white text-xs mb-3">Trending Topics</h3>
-              {topics.length === 0 ? (
-                <p className="text-xs text-gray-500">Analyzing chat topics...</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {topics.map((t, i) => (
-                    <span key={i} className="px-2 py-1 bg-kick-dark border border-kick-border rounded text-[11px] font-semibold text-white">
-                      <span className="text-kick-green font-mono mr-1">#{i + 1}</span>{t}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Mod Alerts */}
-            <div className="glass-panel rounded-xl p-4 flex flex-col max-h-48 overflow-hidden">
-              <h3 className="font-bold text-white text-xs mb-2 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
-                Mod Alerts
-              </h3>
-              <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0">
-                {modAlerts.length === 0 ? (
-                  <p className="text-xs text-gray-500 italic">No warnings.</p>
-                ) : (
-                  modAlerts.slice(0, 5).map(alert => (
-                    <div key={alert.id} className={`p-1.5 rounded border text-[10px] ${
-                      alert.severity === 'high' 
-                        ? 'bg-red-950/15 border-red-500/20 text-red-300' 
-                        : 'bg-yellow-950/15 border-yellow-500/20 text-yellow-300'
-                    }`}>
-                      <span className="mr-1">{alert.severity === 'high' ? '🚨' : '⚠️'}</span>
-                      {alert.message}
+                {/* 2. DEEP OBS SETTINGS */}
+                {settingsActiveTab === 'obs' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-lg font-bold text-white leading-none">OBS Encoder & RTMP Configurations</h3>
+                      <p className="text-xs text-gray-400 mt-1">Setup primary custom server integrations and stream outputs.</p>
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* Row 4: Timeline */}
-          <div className="glass-panel rounded-xl flex flex-col max-h-52">
-            <div className="px-4 py-2.5 border-b border-kick-border flex items-center justify-between shrink-0">
-              <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
-                <Compass className="w-3.5 h-3.5 text-kick-green" />
-                Stream Timeline
-              </h3>
-              <span className="text-[10px] text-gray-500 font-mono">{timeline.length} events</span>
-            </div>
-            <div className="flex-1 p-3 overflow-y-auto min-h-0">
-              {timeline.length === 0 ? (
-                <p className="text-xs text-gray-500 italic py-3 text-center">Timeline will populate as events happen...</p>
-              ) : (
-                <div className="space-y-2 relative before:absolute before:left-1.5 before:top-1.5 before:bottom-1.5 before:w-px before:bg-kick-border">
-                  {timeline.map((evt) => (
-                    <div key={evt.id} className="relative pl-5">
-                      <div className={`absolute left-0 top-1.5 w-[7px] h-[7px] rounded-full ${
-                        evt.type === 'hype' 
-                          ? 'bg-kick-green ring-2 ring-kick-green/20' 
-                          : evt.type === 'toxicity_spike'
-                            ? 'bg-yellow-500 ring-2 ring-yellow-500/20'
-                            : 'bg-blue-400 ring-2 ring-blue-400/20'
-                      }`} />
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-gray-500 font-mono bg-kick-dark px-1 py-0.5 rounded">{evt.time}</span>
-                        <span className="text-[10px] uppercase font-bold" style={{
-                          color: evt.type === 'hype' ? '#53FC18' : evt.type === 'toxicity_spike' ? '#F59E0B' : '#60A5FA'
-                        }}>{evt.type.replace('_', ' ')}</span>
+                    {/* Stream Health stats mock */}
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="p-3.5 bg-kick-dark border border-kick-border rounded-2xl">
+                        <span className="text-[10px] text-gray-500 font-bold block uppercase">Quality</span>
+                        <span className="text-sm font-black text-kick-green block mt-1">Excellent</span>
                       </div>
-                      <p className="text-xs text-white mt-0.5">{evt.description}</p>
+                      <div className="p-3.5 bg-kick-dark border border-kick-border rounded-2xl">
+                        <span className="text-[10px] text-gray-500 font-bold block uppercase">Packet Loss</span>
+                        <span className="text-sm font-black text-white block mt-1 font-mono">0.1%</span>
+                      </div>
+                      <div className="p-3.5 bg-kick-dark border border-kick-border rounded-2xl">
+                        <span className="text-[10px] text-gray-500 font-bold block uppercase">Dropped Frames</span>
+                        <span className="text-sm font-black text-white block mt-1 font-mono">2</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 pt-2">
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between max-w-lg">
+                          <label className="text-xs font-semibold text-gray-400">Primary RTMP Server URL</label>
+                          <button 
+                            onClick={() => { navigator.clipboard.writeText(streamUrl); toast.success('Server URL copied!'); }}
+                            className="text-[10px] text-kick-green hover:underline cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <input 
+                          type="text" 
+                          value={streamUrl}
+                          onChange={(e) => setStreamUrl(e.target.value)}
+                          className="w-full max-w-lg px-3.5 py-2.5 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green"
+                          placeholder="rtmps://stream.kick.com/live"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between max-w-lg">
+                          <label className="text-xs font-semibold text-gray-400">Primary Stream Key</label>
+                          <button 
+                            onClick={() => { navigator.clipboard.writeText(streamKey); toast.success('Stream Key copied!'); }}
+                            className="text-[10px] text-kick-green hover:underline cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <input 
+                          type="password" 
+                          value={streamKey}
+                          onChange={(e) => setStreamKey(e.target.value)}
+                          className="w-full max-w-lg px-3.5 py-2.5 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green font-mono"
+                          placeholder="live_xxxxxxxxxxxx"
+                        />
+                      </div>
+
+                      {/* Encoder specs widget */}
+                      <div className="p-4 bg-kick-panel/20 border border-kick-border rounded-2xl max-w-lg">
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-2">Recommended Encoder specs (1080p60)</h4>
+                        <div className="text-[11px] text-gray-400 space-y-1 font-mono">
+                          <div>• Bitrate: <span className="text-white">6000 kbps</span></div>
+                          <div>• Rate Control: <span className="text-white">CBR</span></div>
+                          <div>• Hardware Encoder: <span className="text-white">NVIDIA NVENC H.264 / AV1</span></div>
+                          <div>• Keyframe Interval: <span className="text-white">2s</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. AI PROMPT RULES & TUNING */}
+                {settingsActiveTab === 'ai' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-lg font-bold text-white leading-none">AI Prompt Rules Tuning</h3>
+                      <p className="text-xs text-gray-400 mt-1">Instruct the co-pilot, prioritize viewers, and set toxicity filters.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Prompt editor */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-gray-400">System Guidelines Instruction Prompt</label>
+                        <textarea 
+                          rows={3}
+                          value={systemPrompt}
+                          onChange={(e) => setSystemPrompt(e.target.value)}
+                          className="w-full max-w-xl px-3.5 py-2 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green resize-none"
+                        />
+                      </div>
+
+                      {/* Toxicity Threshold */}
+                      <div className="space-y-2 max-w-xl bg-kick-dark/30 p-4 border border-kick-border rounded-2xl">
+                        <div className="flex justify-between items-baseline select-none">
+                          <label className="text-xs font-semibold text-gray-400">AI Toxicity Alert Sensitivity</label>
+                          <span className="text-xs text-kick-green font-bold font-mono">{Math.round(toxicityThreshold * 100)}%</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0.1" 
+                          max="0.9" 
+                          step="0.05"
+                          value={toxicityThreshold}
+                          onChange={(e) => setToxicityThreshold(parseFloat(e.target.value))}
+                          className="w-full accent-kick-green cursor-pointer mt-1"
+                        />
+                        <span className="text-[10px] text-gray-500 block leading-normal mt-1.5">
+                          Toxicity score triggers when content exceeds threshold. Lower scores trigger more alerts.
+                        </span>
+                      </div>
+
+                      {/* VIP listing */}
+                      <div className="space-y-2 max-w-xl">
+                        <label className="text-xs font-semibold text-gray-400">Prioritized VIP Viewer Accounts</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="Add VIP username..."
+                            value={vipInput}
+                            onChange={(e) => setVipInput(e.target.value)}
+                            className="flex-1 px-3 py-1.5 rounded-xl bg-kick-dark border border-kick-border text-xs text-white focus:outline-none focus:border-kick-green"
+                          />
+                          <button 
+                            onClick={() => {
+                              if (vipInput.trim() && !vips.includes(vipInput)) {
+                                setVips([...vips, vipInput.trim()]);
+                                setVipInput('');
+                                toast.success('VIP Added!');
+                              }
+                            }}
+                            className="px-3.5 rounded-xl bg-kick-green text-kick-dark cursor-pointer flex items-center justify-center"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-1.5 select-none">
+                          {vips.map(vip => (
+                            <span key={vip} className="flex items-center gap-1 bg-purple-950/15 border border-purple-500/20 text-purple-400 text-[10px] font-bold px-2 py-0.5 rounded-lg">
+                              @{vip}
+                              <button onClick={() => setVips(vips.filter(v => v !== vip))} className="text-purple-400 hover:text-red-400 cursor-pointer">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Blocked Words */}
+                      <div className="space-y-2 max-w-xl">
+                        <label className="text-xs font-semibold text-gray-400">Blocked Words & Link Filters</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="Add blocked word..."
+                            value={blockedWordInput}
+                            onChange={(e) => setBlockedWordInput(e.target.value)}
+                            className="flex-1 px-3 py-1.5 rounded-xl bg-kick-dark border border-kick-border text-xs text-white focus:outline-none focus:border-kick-green"
+                          />
+                          <button 
+                            onClick={() => {
+                              if (blockedWordInput.trim() && !blockedWords.includes(blockedWordInput)) {
+                                setBlockedWords([...blockedWords, blockedWordInput.trim()]);
+                                setBlockedWordInput('');
+                                toast.success('Word blocked!');
+                              }
+                            }}
+                            className="px-3.5 rounded-xl bg-kick-green text-kick-dark cursor-pointer flex items-center justify-center"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-1.5 select-none">
+                          {blockedWords.map(word => (
+                            <span key={word} className="flex items-center gap-1 bg-red-950/15 border border-red-500/20 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded-lg">
+                              {word}
+                              <button onClick={() => setBlockedWords(blockedWords.filter(w => w !== word))} className="text-red-400 hover:text-white cursor-pointer">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. APPEARANCE SETTINGS */}
+                {settingsActiveTab === 'appearance' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-lg font-bold text-white leading-none">Appearance Neon Theme</h3>
+                      <p className="text-xs text-gray-400 mt-1">Select your signature cockpit color.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 max-w-lg select-none">
+                      {[
+                        { id: 'cyber-green', label: 'Cyber Green', color: 'bg-[#53FC18]', glow: 'shadow-[0_0_8px_#53FC18]' },
+                        { id: 'purple-neon', label: 'Purple Neon', color: 'bg-purple-500', glow: 'shadow-[0_0_8px_#A855F7]' },
+                        { id: 'blue-aurora', label: 'Blue Aurora', color: 'bg-cyan-500', glow: 'shadow-[0_0_8px_#06B6D4]' },
+                        { id: 'red-crimson', label: 'Red Crimson', color: 'bg-red-500', glow: 'shadow-[0_0_8px_#EF4444]' }
+                      ].map(themeItem => (
+                        <div
+                          key={themeItem.id}
+                          onClick={() => {
+                            setActiveTheme(themeItem.id as any);
+                            toast.success(`Theme switched to ${themeItem.label}!`);
+                          }}
+                          className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                            activeTheme === themeItem.id
+                              ? 'bg-kick-panel border-kick-green'
+                              : 'bg-kick-dark border-kick-border hover:bg-kick-panel-hover'
+                          }`}
+                        >
+                          <span className="text-xs font-bold text-white">{themeItem.label}</span>
+                          <div className={`w-3.5 h-3.5 rounded-full ${themeItem.color} ${themeItem.glow}`} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="h-16 border-t border-kick-border px-6 flex items-center justify-end gap-3 shrink-0 bg-kick-dark/20">
+              <button 
+                onClick={() => setShowSettingsModal(false)}
+                className="px-5 py-2 rounded-xl bg-kick-border text-xs font-bold hover:bg-kick-border/80 cursor-pointer"
+              >
+                Close
+              </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    const res = await fetch('/api/streamer/settings', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ streamUrl, streamKey })
+                    });
+                    if (!res.ok) throw new Error('Save failed');
+                    toast.success('Settings saved to database!');
+                    setShowSettingsModal(false);
+                  } catch (e: any) {
+                    toast.error('Failed to save settings.');
+                  }
+                }}
+                className="px-5 py-2 rounded-xl bg-kick-green text-kick-dark text-xs font-black hover:shadow-[0_0_10px_var(--neon-glow)] cursor-pointer"
+              >
+                Save Configurations
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────────────────────────────────────────────────── */}
+      {/* LAYER 6: LINEAR COMMAND SEARCH MODAL (Ctrl + K)               */}
+      {/* ──────────────────────────────────────────────────────────── */}
+      {showSearchModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-start justify-center p-4 pt-[15vh] animate-fade-in">
+          <div className="w-full max-w-lg glass-modal rounded-2xl overflow-hidden flex flex-col max-h-[50vh]">
+            {/* Search Input */}
+            <div className="flex items-center gap-3 px-4 py-3.5 border-b border-kick-border bg-kick-dark/30">
+              <Search className="w-4 h-4 text-kick-green shrink-0" />
+              <input
+                type="text"
+                placeholder="Search messages, questions, alerts..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 bg-transparent border-none text-white text-xs placeholder-gray-500 focus:outline-none"
+                autoFocus
+              />
+              <button onClick={() => setShowSearchModal(false)} className="text-gray-400 hover:text-white cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Results */}
+            <div className="flex-1 overflow-y-auto p-2 text-left">
+              {searchQuery.trim() === '' ? (
+                <div className="py-8 text-center text-gray-500 text-xs">
+                  Type query keys to search this session data
+                </div>
+              ) : getFilteredItems().length === 0 ? (
+                <div className="py-8 text-center text-gray-500 text-xs">
+                  No matching details found.
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {getFilteredItems().map((item, idx) => (
+                    <div 
+                      key={idx}
+                      onClick={() => {
+                        setShowSearchModal(false);
+                        toast.success('Navigated matching entry!');
+                      }}
+                      className="p-2.5 rounded-xl hover:bg-kick-panel-hover cursor-pointer transition-all flex items-center justify-between text-xs"
+                    >
+                      <span className="text-white line-clamp-1 pr-6 font-semibold">{item.label}</span>
+                      <span className="text-[9px] bg-kick-green/10 text-kick-green border border-kick-green/20 px-2 py-0.5 rounded-md font-mono capitalize">
+                        {item.type}
+                      </span>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      {/* ──── FLOATING DEV TOOLS PANEL ──── */}
-      {showDevTools && (
-        <div className="fixed bottom-4 right-4 w-80 glass-panel rounded-xl border border-kick-green/20 shadow-[0_0_20px_rgba(0,0,0,0.5)] z-50 animate-fade-in-up">
-          <div className="px-4 py-2.5 border-b border-kick-border flex items-center justify-between">
-            <h4 className="text-xs font-bold text-kick-green uppercase flex items-center gap-1.5">
-              <Wrench className="w-3 h-3" />
-              Developer Tools
-            </h4>
-            <button onClick={() => setShowDevTools(false)} className="text-gray-400 hover:text-white cursor-pointer">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="p-3 space-y-3">
-            {/* Spike Triggers */}
-            <div>
-              <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1.5">Spike Triggers</span>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => triggerSpike('hype')}
-                  className="flex-1 px-2 py-1.5 rounded-lg bg-kick-dark border border-kick-green/20 text-kick-green text-xs font-bold hover:bg-kick-green/10 cursor-pointer"
-                >
-                  🔥 Hype
-                </button>
-                <button 
-                  onClick={() => triggerSpike('spam')}
-                  className="flex-1 px-2 py-1.5 rounded-lg bg-kick-dark border border-yellow-500/20 text-yellow-500 text-xs font-bold hover:bg-yellow-500/10 cursor-pointer"
-                >
-                  ⚠️ Spam
-                </button>
-                <button 
-                  onClick={() => triggerSpike('toxic')}
-                  className="flex-1 px-2 py-1.5 rounded-lg bg-kick-dark border border-red-500/20 text-red-500 text-xs font-bold hover:bg-red-500/10 cursor-pointer"
-                >
-                  🚨 Toxic
-                </button>
-              </div>
-            </div>
-
-            {/* Inject Custom Message */}
-            <div>
-              <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1.5">Inject Message</span>
-              <div className="flex gap-1.5 mb-1.5">
-                <input 
-                  type="text"
-                  placeholder="Sender"
-                  value={customMsgSender}
-                  onChange={(e) => setCustomMsgSender(e.target.value)}
-                  className="w-1/2 px-2 py-1 text-[11px] rounded bg-kick-dark border border-kick-border text-white focus:outline-none focus:border-kick-green/50"
-                />
-                <select 
-                  value={customMsgBadge}
-                  onChange={(e) => setCustomMsgBadge(e.target.value as any)}
-                  className="w-1/2 px-2 py-1 text-[11px] rounded bg-kick-dark border border-kick-border text-gray-400 focus:outline-none"
-                >
-                  <option value="none">No Badge</option>
-                  <option value="sub">Subscriber</option>
-                  <option value="vip">VIP</option>
-                  <option value="mod">Moderator</option>
-                </select>
-              </div>
-              <div className="flex gap-1.5">
-                <input 
-                  type="text"
-                  placeholder="Message text..."
-                  value={customMsgText}
-                  onChange={(e) => setCustomMsgText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendCustomMessage()}
-                  className="flex-1 px-2 py-1.5 rounded bg-kick-dark border border-kick-border text-white text-[11px] placeholder-gray-500 focus:outline-none focus:border-kick-green/50"
-                />
-                <button 
-                  onClick={sendCustomMessage}
-                  className="p-1.5 rounded bg-kick-green text-kick-dark cursor-pointer"
-                >
-                  <Send className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-
-            {/* Session Info */}
-            <div className="pt-2 border-t border-kick-border">
-              <div className="text-[10px] text-gray-500 space-y-0.5">
-                <div>Streamer: <span className="text-white font-semibold">{streamerName}</span></div>
-                <div>Theme: <span className="text-white font-semibold">{theme}</span></div>
-                <div>Mode: <span className="text-kick-green font-semibold">{mode === 'demo' ? 'Simulated' : 'Live KICK'}</span></div>
-                <div>Socket: <span className={isConnected ? 'text-kick-green' : 'text-yellow-500'}>{isConnected ? 'Connected' : 'Fallback'}</span></div>
-              </div>
-              <button 
-                onClick={() => router.push('/')}
-                className="w-full mt-2 py-1.5 rounded bg-kick-border hover:bg-red-950/20 hover:text-red-400 text-xs font-semibold transition-all flex items-center justify-center gap-1 cursor-pointer text-gray-400"
-              >
-                <LogOut className="w-3 h-3" />
-                Back to Setup
-              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ──────────────────────────────────────────────────────────── */}
+      {/* LAYER 7: STREAM RECAP OVERLAY                                 */}
+      {/* ──────────────────────────────────────────────────────────── */}
       {showRecap && (
-        <div className="absolute inset-0 bg-kick-dark/95 backdrop-blur z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-kick-panel border border-kick-green/30 rounded-2xl p-6 md:p-8 flex flex-col max-h-[85vh] shadow-[0_0_40px_rgba(83,252,24,0.1)] animate-fade-in-up">
+        <div className="absolute inset-0 bg-[#030712]/95 backdrop-blur-xl z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-kick-panel border border-kick-green/30 rounded-3xl p-6 md:p-8 flex flex-col max-h-[85vh] shadow-[0_0_40px_var(--neon-glow)] animate-fade-in-up">
             
             {/* Header */}
             <div className="text-center pb-4 border-b border-kick-border">
               <div className="text-3xl mb-2">🏆</div>
-              <h2 className="text-xl font-black text-white font-sans">Stream AI Recap</h2>
-              <p className="text-xs text-gray-400 mt-1">Session analytics for @{streamerName}</p>
+              <h2 className="text-xl font-black text-white font-sans">Tonight's Stream Story</h2>
+              <p className="text-xs text-gray-400 mt-1">Session story recap for @{streamerName}</p>
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-4 gap-3 my-4">
-              <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
+            <div className="grid grid-cols-4 gap-3 my-4 select-none">
+              <div className="p-3 bg-kick-dark border border-kick-border rounded-2xl text-center">
                 <span className="text-[10px] text-gray-500 font-bold uppercase block">Uptime</span>
                 <span className="text-sm font-black text-white block font-mono">{recapData?.uptime || uptime}</span>
               </div>
-              <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
-                <span className="text-[10px] text-gray-500 font-bold uppercase block font-sans">Messages</span>
+              <div className="p-3 bg-kick-dark border border-kick-border rounded-2xl text-center">
+                <span className="text-[10px] text-gray-500 font-bold uppercase block">Messages</span>
                 <span className="text-sm font-black text-kick-green block">{recapData?.messageCount || chatMessages.length}</span>
               </div>
-              <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
-                <span className="text-[10px] text-gray-500 font-bold uppercase block font-sans">Sentiment</span>
+              <div className="p-3 bg-kick-dark border border-kick-border rounded-2xl text-center">
+                <span className="text-[10px] text-gray-500 font-bold uppercase block">Sentiment</span>
                 <span className="text-sm font-black text-white block">{recapData?.sentimentScore || 78.5}%</span>
               </div>
-              <div className="p-3 bg-kick-dark border border-kick-border rounded-xl text-center">
+              <div className="p-3 bg-kick-dark border border-kick-border rounded-2xl text-center">
                 <span className="text-[10px] text-gray-500 font-bold uppercase block">Peak Hype</span>
                 <span className="text-sm font-black text-white block font-mono">{recapData?.peakHypeAt || 'N/A'}</span>
               </div>
             </div>
 
-            {/* AI Summary and Top Topics */}
+            {/* Recap Story summary (Narrative layout) */}
             {recapData?.summary && (
-              <div className="p-4 bg-kick-green/5 border border-kick-green/20 rounded-xl mb-4 text-left">
-                <h4 className="text-xs font-bold text-kick-green uppercase mb-1">AI Session Summary</h4>
-                <p className="text-xs text-gray-200 leading-relaxed">
+              <div className="p-5 bg-kick-green/5 border border-kick-green/20 rounded-2xl mb-4 text-left">
+                <h4 className="text-xs font-bold text-kick-green uppercase mb-2">Tonight's Stream Story</h4>
+                <p className="text-xs text-gray-200 leading-relaxed font-sans">
                   {recapData.summary}
                 </p>
                 {recapData.topTopics && (
-                  <div className="mt-3 flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] text-gray-500 font-bold uppercase">Top Topics:</span>
+                  <div className="mt-4 flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase">Discussed Topics:</span>
                     {recapData.topTopics.map((topic: string, idx: number) => (
-                      <span key={idx} className="px-2 py-0.5 rounded bg-kick-dark border border-kick-border text-[10px] text-white">
+                      <span key={idx} className="px-2.5 py-0.5 rounded-lg bg-kick-dark border border-kick-border text-[10px] text-white">
                         #{topic}
                       </span>
                     ))}
@@ -1301,11 +1726,11 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Timeline */}
+            {/* Timeline Events list */}
             <div className="flex-1 overflow-y-auto min-h-0 text-left">
               <h4 className="text-xs text-gray-400 font-bold uppercase mb-3 flex items-center gap-1">
                 <Clock className="w-3 h-3 text-kick-green" />
-                Event Log
+                Stream Milestones Axis
               </h4>
               <div className="space-y-3 border-l border-kick-border ml-2 pl-4">
                 {recapTimeline.length === 0 ? (
@@ -1326,21 +1751,15 @@ export default function Dashboard() {
             </div>
 
             {/* Footer */}
-            <div className="pt-4 border-t border-kick-border flex gap-3 mt-4">
+            <div className="pt-4 border-t border-kick-border flex gap-3 mt-4 shrink-0">
               <button 
-                onClick={() => {
-                  setShowRecap(false);
-                  router.push('/');
-                }}
+                onClick={() => { setShowRecap(false); router.push('/'); }}
                 className="flex-1 py-2.5 rounded-xl bg-kick-border hover:bg-kick-border/80 text-white font-bold text-sm transition-all cursor-pointer text-center"
               >
                 Back to Setup
               </button>
               <button 
-                onClick={() => {
-                  setShowRecap(false);
-                  window.location.reload();
-                }}
+                onClick={() => { setShowRecap(false); window.location.reload(); }}
                 className="flex-1 py-2.5 rounded-xl bg-kick-green text-kick-dark font-bold text-sm hover:shadow-[0_0_12px_rgba(83,252,24,0.3)] transition-all cursor-pointer text-center"
               >
                 Restart Co-pilot
@@ -1351,125 +1770,34 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ──── OBS SETUP & STREAM SETTINGS PANEL ──── */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-kick-panel border border-kick-border rounded-2xl p-6 shadow-2xl space-y-6 relative overflow-hidden animate-fade-in-up text-left">
-            <div className="flex items-center justify-between border-b border-kick-border pb-3">
-              <h3 className="font-extrabold text-white text-sm uppercase tracking-wider flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-kick-green" />
-                Stream Settings & OBS
-              </h3>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* Dev Tools trigger */}
+      <div className="fixed bottom-6 left-6 z-40 select-none">
+        <button
+          onClick={() => setShowDevTools(!showDevTools)}
+          className="p-2.5 rounded-full bg-kick-panel border border-kick-border text-gray-400 hover:text-white cursor-pointer shadow-lg"
+          title="Toggle Spike Injectors"
+        >
+          <Wrench className="w-4 h-4" />
+        </button>
+      </div>
 
-            {/* Kick Live Status Widget */}
-            <div className="p-4 rounded-xl border bg-kick-dark border-kick-border space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-400">KICK Stream Status</span>
-                <button 
-                  onClick={() => checkLiveStatus(streamerName)}
-                  disabled={isCheckingLive}
-                  className="text-[10px] text-kick-green hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <RefreshCw className={`w-2.5 h-2.5 ${isCheckingLive ? 'animate-spin' : ''}`} />
-                  Refresh
-                </button>
+      {/* DEV TOOLS FLOATING MODAL */}
+      {showDevTools && (
+        <div className="fixed bottom-20 left-6 w-80 glass-modal rounded-2xl border-kick-green/30 p-4 z-40 text-left animate-fade-in-up">
+          <div className="flex items-center justify-between border-b border-kick-border pb-2 mb-3">
+            <span className="text-xs font-black text-kick-green uppercase">Developer Tools</span>
+            <button onClick={() => setShowDevTools(false)} className="text-gray-400 hover:text-white cursor-pointer">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="space-y-3">
+            <div>
+              <span className="text-[10px] text-gray-500 font-bold uppercase block mb-1.5">Trigger Spikes</span>
+              <div className="flex gap-2">
+                <button onClick={() => triggerSpike('hype')} className="flex-1 py-1.5 rounded bg-kick-dark border border-kick-green/20 hover:bg-kick-green/10 text-[10px] font-bold text-kick-green cursor-pointer">🔥 Hype</button>
+                <button onClick={() => triggerSpike('spam')} className="flex-1 py-1.5 rounded bg-kick-dark border border-yellow-500/20 hover:bg-yellow-500/10 text-[10px] font-bold text-yellow-500 cursor-pointer">⚠️ Spam</button>
+                <button onClick={() => triggerSpike('toxic')} className="flex-1 py-1.5 rounded bg-kick-dark border border-red-500/20 hover:bg-red-500/10 text-[10px] font-bold text-red-500 cursor-pointer">🚨 Toxic</button>
               </div>
-
-              <div className="flex items-center gap-3">
-                <div className={`w-3.5 h-3.5 rounded-full ${isLive ? 'bg-kick-green animate-pulse shadow-[0_0_8px_#53FC18]' : 'bg-red-500'}`} />
-                <div>
-                  <h4 className="text-sm font-bold text-white capitalize">
-                    {isLive ? '🟢 Live Now' : '🔴 Offline'}
-                  </h4>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
-                    {isLive 
-                      ? `${viewerCount} viewers • Streaming ${category}` 
-                      : 'Channel is currently offline. Setup OBS to stream live.'}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* OBS Streaming Configuration */}
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-400">OBS Stream Server URL</label>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(streamUrl);
-                      toast.success('Server URL copied!');
-                    }}
-                    className="text-[9px] text-kick-green hover:underline cursor-pointer"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <input 
-                  type="text" 
-                  value={streamUrl}
-                  onChange={(e) => setStreamUrl(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green"
-                  placeholder="rtmps://stream.kick.com/live"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-gray-400">OBS Stream Key</label>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(streamKey);
-                      toast.success('Stream Key copied!');
-                    }}
-                    className="text-[9px] text-kick-green hover:underline cursor-pointer"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <input 
-                  type="password" 
-                  value={streamKey}
-                  onChange={(e) => setStreamKey(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-kick-dark border border-kick-border text-white text-xs focus:outline-none focus:border-kick-green font-mono"
-                  placeholder="live_xxxxxxxxxxxx"
-                />
-              </div>
-            </div>
-
-            {/* Save Buttons */}
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setShowSettings(false)}
-                className="flex-1 py-2 rounded-xl bg-kick-border text-xs text-white hover:bg-kick-border/85 cursor-pointer font-bold text-center"
-              >
-                Close
-              </button>
-              <button
-                onClick={async () => {
-                  try {
-                    const res = await fetch('/api/streamer/settings', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ streamUrl, streamKey })
-                    });
-                    if (!res.ok) throw new Error('Save failed');
-                    toast.success('Settings saved to database!');
-                    setShowSettings(false);
-                  } catch (e: any) {
-                    toast.error('Failed to save settings.');
-                  }
-                }}
-                className="flex-1 py-2 rounded-xl bg-kick-green text-kick-dark text-xs font-black cursor-pointer hover:shadow-[0_0_10px_rgba(83,252,24,0.3)] text-center animate-none"
-              >
-                Save Settings
-              </button>
             </div>
           </div>
         </div>
